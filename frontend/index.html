@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DongCiDaCi</title>
+</head>
+<body>
+  <aside class="sidebar">
+    <h1>DongCiDaCi</h1>
+    <p id="capabilities" class="capabilities"></p>
+
+    <form id="newsong" class="newsong">
+      <input name="title" placeholder="Song title" required>
+      <input name="artist" placeholder="Artist">
+      <input name="source_url" placeholder="Spotify / YouTube link (metadata only)">
+      <label class="filepick">
+        <span>Choose audio file</span>
+        <input type="file" name="audio" accept="audio/*">
+      </label>
+      <button type="submit">Add song</button>
+    </form>
+
+    <nav id="library" class="library"></nav>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div class="songid">
+        <h2 id="songtitle">No song selected</h2>
+        <span id="songartist"></span>
+      </div>
+
+      <div class="transport">
+        <button id="run" title="Run the transcription pipeline">Transcribe</button>
+        <button id="playpause">Play / Pause</button>
+        <button id="stop">Stop</button>
+
+        <label class="control">
+          Sound
+          <select id="source">
+            <option value="backing">Original recording</option>
+            <option value="synth">My chart</option>
+          </select>
+        </label>
+
+        <label class="control">
+          Speed <span id="speedlabel">100%</span>
+          <input id="speed" type="range" min="0.4" max="1" step="0.05" value="1">
+        </label>
+      </div>
+    </header>
+
+    <p id="status" class="status-line"></p>
+    <div id="report" class="report"></div>
+
+    <section class="notation-wrap">
+      <div id="notation"></div>
+    </section>
+
+    <section class="editor-wrap">
+      <div class="legend">
+        <span><b>click</b> cycles · <b>right-click</b> clears · <b>drag</b> paints</span>
+        <span class="chars">
+          <b>x</b> hit · <b>X</b> accent · <b>+</b> open hat ·
+          <b>o</b> hit · <b>O</b> accent · <b>g</b> ghost · <b>f</b> flam
+        </span>
+      </div>
+      <div id="grid" class="gridhost"></div>
+    </section>
+  </main>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

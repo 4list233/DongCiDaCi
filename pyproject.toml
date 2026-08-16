@@ -1,0 +1,47 @@
+[project]
+name = "dcdc"
+version = "0.1.0"
+description = "AI-assisted drum transcription with a human in the loop"
+requires-python = ">=3.11"
+
+# Deliberately thin. Everything needed to run the API, edit charts, and run the
+# tests -- but nothing that needs a GPU or a compiler.
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "python-multipart>=0.0.9",
+    "pydantic>=2.6",
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+# The pipeline. Separate because these are large, slow to install, and only
+# needed on the machine that actually does the transcribing.
+audio = [
+    "librosa>=0.10",
+    "soundfile>=0.12",
+    "demucs>=4.0",
+    "torch>=2.2",
+]
+# ISMIR 2024 beat tracker. Big accuracy win over the librosa fallback.
+beat = [
+    "beat-this @ git+https://github.com/CPJKU/beat_this.git",
+]
+dev = [
+    "pytest>=8.0",
+    "httpx>=0.27",
+]
+
+[project.scripts]
+dcdc = "dcdc.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["backend"]
+
+[tool.pytest.ini_options]
+testpaths = ["backend/tests"]
+pythonpath = ["backend"]

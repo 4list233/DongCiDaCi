@@ -1,69 +1,123 @@
 # DongCiDaCi
 
-A drum hobby repo: AI-assisted drum transcription, annotated charts, a fill library, and a
-running record of what I'm learning.
+A drum hobby repo, and the web app that feeds it: AI-assisted transcription,
+annotated charts, a fill library, and a running record of what I'm learning.
 
-The goal is not "push button, get sheet music." It's a workflow where a machine produces a
-first draft and **I overwrite it by ear** — so the git history becomes the record of what I
-heard, what I chose to play, and how my reading improved.
+The goal is not "push button, get sheet music." A machine produces a first
+draft; **I overwrite it by ear**. The git history is the record of what I heard,
+what I chose to play, and how my reading improved.
 
-## Core principle: the chart is a text file
+```
+audio ──▶ separate ──▶ grid ──▶ transcribe ──▶ quantize ──▶ chart.json ──▶ browser
+                                                                │
+                                                       edit ◀───┘  play along
+```
 
-Binary score files (`.mscz`, `.gp`) can't be diffed, grepped, or reviewed in a commit.
-Everything here is stored as plain-text notation — LilyPond drum mode
-(`\drums`, `DrumStaff`, `DrumVoice`) — so charts version like code.
-
-MusicXML is used only to move data *between* tools, never to store work.
-
-## The pipeline
-
-| # | Stage | Tool | What breaks |
-|---|-------|------|-------------|
-| 1 | Isolate the kit | Demucs v4 (`htdemucs`) | Separation artifacts erase ghost notes |
-| 2 | Find the grid | Beat This! / All-In-One | A downbeat off by one shifts the whole chart |
-| 3 | Detect + classify | ADTOF (5 classes) | Ride and crash collapse into one class |
-| 4 | Quantize to notation | music21 / partitura | No off-the-shelf answer for drums — custom code |
-| 5 | Engrave + correct | LilyPond | Nothing; this is the human part |
+## Quickstart
 
 ```sh
-# 0 — check Songsterr first; a human transcription to disagree with beats
-#     a machine transcription to verify from zero
-
-# 1 — isolate the kit
-python -m demucs --two-stems=drums -n htdemucs song.mp3
-
-# 2 — establish the grid (beats, downbeats, section map)
-allin1 predict song.mp3
-
-# 3 — transcribe the isolated stem (ADTOF notebook) -> raw.mid
-
-# 4 — quantize MIDI against the stage-2 downbeats -> score.ly
-
-# 5 — engrave, then fix by ear
-lilypond songs/<song>/score.ly
+python3.11 -m venv .venv && source .venv/bin/activate
+pip install -e '.[audio]'
+npm --prefix frontend install && npm --prefix frontend run build
+dcdc serve          # http://127.0.0.1:8000
 ```
+
+Full Apple Silicon instructions, including the two optional model upgrades, are
+in [docs/SETUP-MAC-STUDIO.md](docs/SETUP-MAC-STUDIO.md). Run `dcdc doctor` to
+see which stages are live.
+
+## How it works
+
+**A Spotify link cannot give you audio.** The Audio Features and Audio Analysis
+endpoints were closed to new apps in November 2024, and the Web Playback SDK is
+DRM'd specifically so you cannot reach the samples. Paste the link for metadata;
+supply the audio yourself.
+
+Five stages. Stage 5 is the browser, and it is the one that matters.
+
+| # | Stage | Tool | Failure mode |
+|---|-------|------|--------------|
+| 1 | Isolate the kit | Demucs v4 (`htdemucs`, MPS) | Artifacts erase ghost notes |
+| 2 | Find the grid | Beat This! → librosa | A downbeat off by one displaces the whole chart |
+| 3 | Detect + classify | ADTOF → spectral fallback | 5 classes; ride and crash collapse into one |
+| 4 | Quantize to notation | custom | No off-the-shelf answer — this is the real work |
+| 5 | Engrave + correct | alphaTab in the browser | None; this is the part you do |
+
+Stages 2 and 3 degrade rather than fail. If ADTOF is not installed you get a
+spectral fallback that finds kick, snare and hi-hat and nothing else — and the
+app says so in a banner, because believing you got a real transcription is the
+worst available outcome.
+
+## The chart format
+
+`chart.json` is the canonical, hand-editable source of truth. Everything else —
+AlphaTex for the browser, MIDI for a DAW — is generated and disposable.
+
+```json
+{"n": 5, "section": "verse", "lanes": {
+  "hh": "x-x-x-x-x-x-x-x-",
+  "sd": "----o---g---o---",
+  "bd": "o--o----o-------"}}
+```
+
+One character per subdivision, one bar per line. The vocabulary is drum tab,
+because drummers already read it and because it makes `git diff` legible — you
+can see the groove change. It also makes the fill library greppable:
+
+```sh
+grep -l '"sd": "..oo..oo' fills/*.json
+```
+
+| char | meaning | | char | meaning |
+|------|---------|-|------|---------|
+| `-` | rest | | `o` | hit (drums) |
+| `x` | hit (cymbals) | | `O` | accent |
+| `X` | accent | | `g` | ghost note |
+| `+` | open hi-hat | | `f` | flam |
 
 ## Layout
 
 ```
 songs/<song>/
-  source.md    # link, tempo, meter, tuning notes
-  raw.mid      # machine output, never edited
-  score.ly     # my chart — the source of truth
-  score.pdf
-  notes.md     # what the AI got wrong, what I chose to play
+  song.json    job state and metadata
+  source.mp3   your audio            (gitignored)
+  stems/       demucs output         (gitignored)
+  raw.json     machine's first draft (committed, never edited)
+  chart.json   your chart            (committed, the truth)
+  notes.md     what the AI missed
 
-fills/         # one snippet per fill, tagged by genre + subdivision
-gear/          # cymbals and kit, and what each is for
-genres/        # per-style notes (trap, etc.)
-practice/      # session log, links into songs/
-docs/research/ # landscape research
+fills/         one snippet per fill, tagged by genre + subdivision
+gear/          cymbals and kit, and what each is for
+genres/        per-style notes (trap, etc.)
+practice/      session log
+docs/research/ landscape research
 ```
 
-Keeping `raw.mid` immutable next to an edited `score.ly` means `git diff` answers
-"what did I change, and why" for every song.
+`raw.json` is written once and never overwritten, so `git diff raw.json chart.json`
+answers "what did the machine get wrong" for any song.
+
+## Development
+
+```sh
+.venv/bin/pytest backend/tests      # 45 tests, no ML deps or GPU required
+npm --prefix frontend test          # parses generated AlphaTex through alphaTab
+npm --prefix frontend run dev       # Vite on :5173, proxies /api to :8000
+```
+
+The AlphaTex test is not ceremonial. alphaTab validates percussion articulation
+names against a fixed vocabulary and rejects the **entire score** if one is
+wrong — a plausible-but-invented name produces a blank page, not a missing note.
+
+CLI, for working without the browser:
+
+```sh
+dcdc doctor                         # which stages are installed
+dcdc transcribe song.mp3            # audio -> chart.json
+dcdc show chart.json --bars 5-12    # print as drum tab
+```
 
 ## Research
 
-- [Drum transcription landscape (Aug 2026)](docs/research/2026-08-drum-transcription-landscape.md)
-  — open-source repos, research frontier, prior art, and what every model still gets wrong.
+[Drum transcription landscape (Aug 2026)](docs/research/2026-08-drum-transcription-landscape.md)
+— open-source repos assessed, research frontier, prior art, and what every model
+still gets wrong.

@@ -1,0 +1,238 @@
+"""HTTP API.
+
+Local-only, single user, no auth. Bound to 127.0.0.1 by default -- if you ever
+change that, add authentication first, because every endpoint here will happily
+read and write files for anyone who can reach it.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+from pathlib import Path
+
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+from .chart import Chart, ChartError, LANES, ARTICULATIONS
+from .jobs import JobRunner
+from .store import Store
+from .pipeline import separate, transcribe
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+log = logging.getLogger(__name__)
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SONGS_DIR = Path(os.environ.get("DCDC_SONGS_DIR", REPO_ROOT / "songs"))
+FRONTEND_DIST = REPO_ROOT / "frontend" / "dist"
+
+store = Store(SONGS_DIR)
+runner = JobRunner(store)
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    yield
+    runner.shutdown()
+
+
+app = FastAPI(title="DongCiDaCi", version="0.1.0", lifespan=lifespan)
+
+# The Vite dev server runs on another port during development.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# --- models -----------------------------------------------------------------
+
+class CreateSong(BaseModel):
+    title: str
+    artist: str = ""
+    source_url: str = ""
+
+
+class TranscribeOptions(BaseModel):
+    adt_backend: str = "auto"
+    grid_backend: str = "auto"
+    res: int | None = None
+
+
+# --- meta -------------------------------------------------------------------
+
+@app.get("/api/health")
+def health():
+    """What the machine can actually do right now.
+
+    The frontend uses this to say "spectral fallback" out loud rather than
+    letting you believe you got a real transcription.
+    """
+    return {
+        "ok": True,
+        "songs_dir": str(SONGS_DIR),
+        "demucs": separate.is_available(),
+        "adtof": transcribe.is_adtof_available(),
+        "device": separate.pick_device(),
+    }
+
+
+@app.get("/api/vocabulary")
+def vocabulary():
+    """Lanes and articulation characters, so the editor never hardcodes them."""
+    return {
+        "lanes": [
+            {"key": l.key, "label": l.label, "midi": l.midi, "alphatex": l.alphatex}
+            for l in LANES
+        ],
+        "articulations": [
+            {"char": a.char, "name": a.name, "velocity": a.velocity,
+             "open": a.open, "rudiment": a.rudiment}
+            for a in ARTICULATIONS
+        ],
+    }
+
+
+# --- songs ------------------------------------------------------------------
+
+@app.get("/api/songs")
+def list_songs():
+    return [s.__dict__ for s in store.list()]
+
+
+@app.post("/api/songs", status_code=201)
+def create_song(body: CreateSong):
+    if not body.title.strip():
+        raise HTTPException(400, "title is required")
+    return store.create(body.title.strip(), body.artist.strip(), body.source_url.strip()).__dict__
+
+
+@app.get("/api/songs/{slug}")
+def get_song(slug: str):
+    song = store.get(slug)
+    if not song:
+        raise HTTPException(404, f"no song {slug!r}")
+    return {
+        **song.__dict__,
+        "has_chart": store.chart_path(slug).exists(),
+        "has_audio": store.audio_path(slug) is not None,
+        "running": runner.is_running(slug),
+    }
+
+
+@app.delete("/api/songs/{slug}", status_code=204)
+def delete_song(slug: str):
+    if not store.get(slug):
+        raise HTTPException(404, f"no song {slug!r}")
+    if runner.is_running(slug):
+        raise HTTPException(409, "a transcription is still running for this song")
+    store.delete(slug)
+
+
+@app.post("/api/songs/{slug}/audio")
+async def upload_audio(slug: str, file: UploadFile = File(...)):
+    if not store.get(slug):
+        raise HTTPException(404, f"no song {slug!r}")
+    try:
+        name = store.store_audio(slug, file.filename or "source.mp3", await file.read())
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"audio_file": name}
+
+
+@app.get("/api/songs/{slug}/audio")
+def get_audio(slug: str):
+    """Serve the source audio for playback. Range requests work, which is what
+    lets alphaTab scrub the backing track."""
+    path = store.audio_path(slug)
+    if not path:
+        raise HTTPException(404, "no audio uploaded for this song")
+    return FileResponse(path)
+
+
+# --- transcription ----------------------------------------------------------
+
+@app.post("/api/songs/{slug}/transcribe", status_code=202)
+def start_transcription(slug: str, options: TranscribeOptions | None = None):
+    song = store.get(slug)
+    if not song:
+        raise HTTPException(404, f"no song {slug!r}")
+    if store.audio_path(slug) is None:
+        raise HTTPException(400, "upload audio before transcribing")
+
+    opts = (options or TranscribeOptions()).model_dump()
+    if not runner.submit(slug, **opts):
+        raise HTTPException(409, "a transcription is already running for this song")
+    return {"status": "queued"}
+
+
+# --- charts -----------------------------------------------------------------
+
+@app.get("/api/songs/{slug}/chart")
+def get_chart(slug: str):
+    chart = store.load_chart(slug)
+    if not chart:
+        raise HTTPException(404, "no chart yet -- run a transcription first")
+    return chart.to_dict()
+
+
+@app.put("/api/songs/{slug}/chart")
+def put_chart(slug: str, body: dict):
+    """Save an edited chart.
+
+    Validates before writing. A chart that fails validation is a bug in the
+    editor, and silently persisting it would corrupt the file you actually care
+    about, so this refuses rather than repairs.
+    """
+    if not store.get(slug):
+        raise HTTPException(404, f"no song {slug!r}")
+    try:
+        chart = Chart.from_dict(body)
+    except ChartError as exc:
+        raise HTTPException(422, f"invalid chart: {exc}") from exc
+
+    store.save_chart(slug, chart)
+    return {"saved": True, "bars": len(chart.bars)}
+
+
+@app.get("/api/songs/{slug}/raw")
+def get_raw_chart(slug: str):
+    """The machine's untouched first draft, for diffing against your edits."""
+    path = store.raw_path(slug)
+    if not path.exists():
+        raise HTTPException(404, "no raw chart recorded")
+    return Chart.load(path).to_dict()
+
+
+@app.get("/api/songs/{slug}/notes", response_class=PlainTextResponse)
+def get_notes(slug: str):
+    path = store.notes_path(slug)
+    return path.read_text(encoding="utf-8") if path.exists() else ""
+
+
+@app.put("/api/songs/{slug}/notes")
+def put_notes(slug: str, text: str = Form("")):
+    if not store.get(slug):
+        raise HTTPException(404, f"no song {slug!r}")
+    store.notes_path(slug).write_text(text, encoding="utf-8")
+    return {"saved": True}
+
+
+# --- frontend ---------------------------------------------------------------
+
+if FRONTEND_DIST.exists():
+    app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")
+else:
+    @app.get("/")
+    def no_frontend():
+        return {
+            "message": "frontend not built",
+            "fix": "cd frontend && npm install && npm run build",
+            "dev": "or run `npm run dev` and open http://localhost:5173",
+        }
