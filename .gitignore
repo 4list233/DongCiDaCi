@@ -21,6 +21,9 @@ frontend/dist/
 # Pipeline scratch
 .*-work/
 
+# Optional model backends, cloned in place and installed with `pip install -e`
+ADTOF-pytorch/
+
 # alphaTab vendors its font and soundfont into public/ at install time
 frontend/public/font/
 frontend/public/soundfont/
