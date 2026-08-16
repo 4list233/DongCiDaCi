@@ -98,29 +98,37 @@ pip install 'git+https://github.com/CPJKU/beat_this.git'
 
 ### ADTOF — stage 3
 
-This is the real transcription model, and the reason the spectral fallback
-exists at all. Two routes, and on Apple Silicon **only the first is realistic**:
+The real transcription model, and the reason the spectral fallback exists at
+all. This is the bigger of the two upgrades.
 
-**ADTOF-pytorch (recommended).** Same model, ~0.2% F-measure difference, and
-critically it needs neither TensorFlow nor madmom. Those two are exactly what
-breaks on ARM — madmom needs a Cython build against an old NumPy ABI, and
-Omnizart is unusable on Apple Silicon for the same reason.
-
-**Upstream ADTOF.** Needs Python 3.10, TensorFlow, Keras and madmom. If you want
-it, give it its own environment rather than fighting the main one:
+Use **ADTOF-pytorch**, a port that needs only torch, librosa and pretty_midi:
 
 ```sh
-python3.10 -m venv .venv-adtof
-source .venv-adtof/bin/activate
-pip install 'git+https://github.com/MZehren/ADTOF.git'
+git clone https://github.com/xavriley/ADTOF-pytorch
+pip install -e ADTOF-pytorch
 ```
 
-Note ADTOF is **CC BY-NC-SA** — fine for a personal hobby, not for anything
-commercial. Demucs, librosa and Beat This! are permissive.
+Same model to within ~0.2% F-measure, and critically it needs neither
+TensorFlow nor madmom — those two are exactly what does not build on Apple
+Silicon (madmom wants a Cython build against an old NumPy ABI, which is also
+why Omnizart is unusable on ARM). Upstream ADTOF needs Python 3.10 plus both of
+them, so it is not worth the fight on this machine.
 
-Either way, once `dcdc doctor` reports `adtof ok`, the pipeline picks it up
-automatically — `transcribe.py` chooses the best available backend and falls
-back on its own.
+Two things it buys you beyond accuracy:
+
+- **Velocities.** It emits MIDI, so hits carry velocity, and the quantizer can
+  actually distinguish a ghost note from a backbeat. The spectral fallback
+  estimates velocity from band energy, which is far cruder.
+- **Toms and cymbals.** The fallback has no tom or cymbal classes at all.
+
+It still resolves only 5 classes, so ride-vs-crash and open-vs-closed hi-hat
+remain yours to mark.
+
+Note the underlying ADTOF work is **CC BY-NC-SA** — fine for a personal hobby,
+not for anything commercial. Demucs, librosa and Beat This! are permissive.
+
+Once `dcdc doctor` reports `adtof ok` the pipeline picks it up automatically;
+`transcribe.py` selects the best available backend on its own.
 
 ---
 

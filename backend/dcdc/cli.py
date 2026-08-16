@@ -140,9 +140,14 @@ def _doctor() -> int:
 
     if not has_librosa:
         print("\ninstall the pipeline:  pip install -e '.[audio]'")
-    elif not transcribe.is_adtof_available():
-        print("\nrunning on the spectral fallback -- kick/snare/hi-hat only.")
-        print("see docs/SETUP-MAC-STUDIO.md to add ADTOF.")
+        return 0
+
+    if not has_beat_this:
+        print("\nno beat tracker -- downbeats are inferred, so bar 1 may be wrong:")
+        print("  pip install 'git+https://github.com/CPJKU/beat_this.git'")
+    if not transcribe.is_adtof_available():
+        print("\nrunning on the spectral fallback -- kick/snare/hi-hat only, no ghost notes:")
+        print("  git clone https://github.com/xavriley/ADTOF-pytorch && pip install -e ADTOF-pytorch")
     return 0
 
 

@@ -9,8 +9,10 @@ Apple Silicon (madmom and TensorFlow are the usual culprits).
                misses ghost notes, cannot tell a ride from a crash.
 
   adtof     -- the real model. 5 classes, trained on 359 hours of real music.
-               Prefer the ADTOF-pytorch variant on a Mac: same accuracy to
-               within 0.2% F-measure, without TensorFlow or madmom.
+               On a Mac use ADTOF-pytorch (github.com/xavriley/ADTOF-pytorch):
+               same model to within 0.2% F-measure, and it needs only torch,
+               librosa and pretty_midi -- no TensorFlow, no madmom, which are
+               exactly what will not build on Apple Silicon.
 
 Both return the same thing, so the rest of the pipeline does not care which ran.
 """
@@ -64,35 +66,98 @@ def transcribe(drums_path: Path, backend: str = "auto") -> Transcription:
 
 # --- the real model ---------------------------------------------------------
 
+# General MIDI channel-10 note numbers -> our lanes.
+#
+# The model resolves 5 classes, so most of this map is about reading its output
+# sensibly rather than recovering detail it never had. Where a class could be
+# several instruments we take the likelier one and let you correct it: a tom
+# lands on the mid tom, an unspecified cymbal on the ride.
+GM_TO_LANE: dict[int, str] = {
+    35: "bd", 36: "bd",                          # acoustic / electric kick
+    37: "sd", 38: "sd", 40: "sd",                # side stick, snare, e-snare
+    39: "sd",                                    # hand clap reads as a backbeat
+    42: "hh", 44: "hf", 46: "hh",                # closed, pedal, open hat
+    41: "lt", 43: "lt",                          # floor toms
+    45: "mt", 47: "mt",                          # low / low-mid toms
+    48: "ht", 50: "ht",                          # hi-mid / high toms
+    49: "cc", 52: "cc", 55: "cc", 57: "cc",      # crash, china, splash
+    51: "rd", 53: "rd", 59: "rd",                # ride, bell, ride 2
+}
+
+# Hat notes that mean the hat was open. Carried through so the quantizer can
+# mark them rather than flattening every hat to closed.
+GM_OPEN_HAT = frozenset({46})
+
+
 def _adtof(drums_path: Path) -> Transcription:
-    """Bridge to ADTOF.
+    """Bridge to ADTOF-pytorch.
 
-    ADTOF ships as a notebook rather than a library API, so this adapts whichever
-    entry point is present. Its 5 classes map onto our lanes with a deliberate
-    loss of detail: `tt` lands on the mid tom and `cy` on the ride, because those
-    are the likelier reading, and you correct them in the editor.
+    Writes MIDI to a temp file and reads it back rather than reaching into the
+    model, because MIDI is the documented output and it carries velocity --
+    which is what makes ghost-note detection downstream possible at all.
     """
-    from adtof.model.model import Model  # type: ignore
+    import tempfile
 
-    model = Model.modelFactory(modelName="crnn-ADTOF")[0]
-    model.load()
-    prediction = model.predictOneTrack(str(drums_path))
+    from adtof_pytorch import transcribe_to_midi  # type: ignore
 
-    lane_of = {"bd": "bd", "sd": "sd", "hh": "hh", "tt": "mt", "cy": "rd"}
+    with tempfile.TemporaryDirectory() as tmp:
+        midi_path = Path(tmp) / "drums.mid"
+        try:
+            transcribe_to_midi(str(drums_path), str(midi_path), device=_torch_device())
+        except TypeError:
+            # Older signatures take only the two paths.
+            transcribe_to_midi(str(drums_path), str(midi_path))
+        onsets, unmapped = _onsets_from_midi(midi_path)
+
+    warnings = [
+        "ADTOF resolves 5 classes: toms default to mid tom, cymbals to ride",
+        "open vs closed hi-hat and ride vs crash still need your ear",
+    ]
+    if unmapped:
+        warnings.append(
+            f"ignored {len(unmapped)} hits on unmapped MIDI notes: {sorted(unmapped)}"
+        )
+
+    return Transcription(onsets=onsets, backend="adtof", warnings=warnings)
+
+
+def _onsets_from_midi(midi_path: Path) -> tuple[list[Onset], set[int]]:
+    """Read a General MIDI drum file into onsets. Returns (onsets, unmapped notes)."""
+    import pretty_midi
+
+    midi = pretty_midi.PrettyMIDI(str(midi_path))
     onsets: list[Onset] = []
-    for cls, times in zip(ADT_CLASSES, prediction):
-        for t in np.atleast_1d(times):
-            onsets.append(Onset(time=float(t), lane=lane_of[cls], velocity=0.72))
+    unmapped: set[int] = set()
+
+    for instrument in midi.instruments:
+        for note in instrument.notes:
+            lane = GM_TO_LANE.get(note.pitch)
+            if lane is None:
+                unmapped.add(note.pitch)
+                continue
+            onsets.append(
+                Onset(
+                    time=float(note.start),
+                    lane=lane,
+                    velocity=float(note.velocity) / 127.0,
+                    confidence=1.0,
+                )
+            )
 
     onsets.sort(key=lambda o: o.time)
-    return Transcription(
-        onsets=onsets,
-        backend="adtof",
-        warnings=[
-            "ADTOF resolves 5 classes: toms default to mid tom and cymbals to ride",
-            "velocities are not predicted, so ghost notes need marking by ear",
-        ],
-    )
+    return onsets, unmapped
+
+
+def _torch_device() -> str:
+    try:
+        import torch
+        if torch.backends.mps.is_available():
+            return "mps"
+        if torch.cuda.is_available():
+            return "cuda"
+    except ImportError:
+        pass
+    return "cpu"
 
 
 # --- the fallback -----------------------------------------------------------
@@ -187,7 +252,7 @@ def _spectral(drums_path: Path) -> Transcription:
 
 def is_adtof_available() -> bool:
     try:
-        import adtof  # noqa: F401
+        import adtof_pytorch  # noqa: F401
         return True
     except ImportError:
         return False
