@@ -106,6 +106,15 @@ async function openSong(slug) {
 
   renderReport(song);
 
+  // A song with no audio can do nothing at all, so say so with a control
+  // attached rather than an instruction the UI does not let you follow.
+  $('#needaudio').hidden = song.has_audio;
+  $('#run').disabled = !song.has_audio;
+  $('#run').title = song.has_audio
+    ? 'Run the transcription pipeline'
+    : 'Upload an audio file first';
+  $('#deletesong').hidden = false;
+
   if (song.has_chart) {
     await loadChart(slug);
     if (song.has_audio) player.setBackingTrack(api.audioUrl(slug));
@@ -113,8 +122,8 @@ async function openSong(slug) {
     state.chart = null;
     editor.setChart(null);
     setStatus(song.has_audio
-      ? 'Audio uploaded. Run the pipeline to get a first draft.'
-      : 'Upload an audio file to begin.');
+      ? 'Audio ready. Hit Transcribe for a first draft.'
+      : 'No audio yet — this song cannot be transcribed until you add a file.');
   }
 }
 
@@ -191,19 +200,89 @@ function renderReport(song) {
 // --- controls ---------------------------------------------------------------
 
 function bindControls() {
+  // Show which file was picked. Without this there is no confirmation that the
+  // browser took it, which is how you end up submitting an empty form twice.
+  $('#filepick').querySelector('input').addEventListener('change', (ev) => {
+    const file = ev.target.files?.[0];
+    $('#filename').textContent = file ? file.name : 'Choose audio file';
+    $('#filepick').classList.toggle('chosen', Boolean(file));
+  });
+
+  $('#whynot').addEventListener('click', (ev) => {
+    ev.preventDefault();
+    $('#needaudio').hidden = false;
+    $('#needaudio').scrollIntoView({ block: 'nearest' });
+  });
+
   $('#newsong').addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const form = new FormData(ev.target);
-    const song = await api.createSong({
-      title: form.get('title'),
-      artist: form.get('artist'),
-      source_url: form.get('source_url'),
-    });
     const file = form.get('audio');
-    if (file && file.size) await api.uploadAudio(song.slug, file);
-    ev.target.reset();
-    await refreshLibrary();
-    await openSong(song.slug);
+
+    if (!file || !file.size) {
+      setStatus('Pick an audio file — a song without one cannot be transcribed.', true);
+      return;
+    }
+
+    const submit = ev.target.querySelector('button[type="submit"]');
+    submit.disabled = true;
+    submit.textContent = 'Uploading…';
+    try {
+      const song = await api.createSong({
+        title: form.get('title'),
+        artist: form.get('artist'),
+        source_url: form.get('source_url'),
+      });
+      await api.uploadAudio(song.slug, file);
+      ev.target.reset();
+      $('#filename').textContent = 'Choose audio file';
+      $('#filepick').classList.remove('chosen');
+      await refreshLibrary();
+      await openSong(song.slug);
+    } catch (err) {
+      setStatus(`Could not add song: ${err.message}`, true);
+    } finally {
+      submit.disabled = false;
+      submit.textContent = 'Add song';
+    }
+  });
+
+  // Attach audio to a song that was created without it.
+  $('#addaudio').addEventListener('change', async (ev) => {
+    const file = ev.target.files?.[0];
+    if (!file || !state.slug) return;
+    $('#addaudioname').textContent = `Uploading ${file.name}…`;
+    try {
+      await api.uploadAudio(state.slug, file);
+      await openSong(state.slug);
+      setStatus('Audio added. Hit Transcribe for a first draft.');
+    } catch (err) {
+      setStatus(`Upload failed: ${err.message}`, true);
+    } finally {
+      $('#addaudioname').textContent = 'Choose audio file';
+      ev.target.value = '';
+    }
+  });
+
+  $('#deletesong').addEventListener('click', async () => {
+    if (!state.slug) return;
+    const song = await api.getSong(state.slug);
+    if (!confirm(`Delete "${song.title}" and its chart? This cannot be undone.`)) return;
+    try {
+      await api.deleteSong(state.slug);
+      state.slug = null;
+      state.chart = null;
+      editor.setChart(null);
+      history.replaceState(null, '', location.pathname);
+      $('#songtitle').textContent = 'No song selected';
+      $('#songartist').textContent = '';
+      $('#deletesong').hidden = true;
+      $('#needaudio').hidden = true;
+      setStatus('Deleted.');
+      await refreshLibrary();
+    } catch (err) {
+      setStatus(`Could not delete: ${err.message}`, true);
+    }
   });
 
   $('#run').addEventListener('click', async () => {

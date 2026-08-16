@@ -96,9 +96,31 @@ input::placeholder { color: var(--ink-3); }
   color: var(--ink-2);
   cursor: pointer;
   font-size: 0.82rem;
+  overflow-wrap: anywhere;
 }
 .filepick:hover { border-color: var(--accent); color: var(--accent); }
 .filepick input { display: none; }
+/* Confirm the browser actually took the file — without this there is no
+   feedback and you submit an empty form twice. */
+.filepick.chosen { border-style: solid; border-color: var(--ok); color: var(--ok); }
+.filepick.large { padding: 1.5rem; font-size: 0.95rem; max-width: 26rem; }
+
+.hint { margin: 0; font-size: 0.72rem; line-height: 1.5; color: var(--ink-3); }
+.hint a { color: var(--accent); }
+
+.needaudio {
+  padding: 1.25rem 1rem 1.5rem;
+  border-bottom: 1px solid var(--rule);
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+.needaudio h3 { margin: 0; font-size: 1rem; }
+.needaudio p { margin: 0; max-width: 60ch; font-size: 0.86rem; color: var(--ink-2); line-height: 1.55; }
+.needaudio[hidden] { display: none; }
+
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+button:disabled:hover { border-color: var(--rule); color: inherit; }
 
 .library { display: flex; flex-direction: column; gap: 1px; }
 

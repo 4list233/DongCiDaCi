@@ -13,12 +13,16 @@
     <form id="newsong" class="newsong">
       <input name="title" placeholder="Song title" required>
       <input name="artist" placeholder="Artist">
-      <input name="source_url" placeholder="Spotify / YouTube link (metadata only)">
-      <label class="filepick">
-        <span>Choose audio file</span>
-        <input type="file" name="audio" accept="audio/*">
+      <label class="filepick" id="filepick">
+        <span id="filename">Choose audio file</span>
+        <input type="file" name="audio" accept="audio/*" required>
       </label>
+      <input name="source_url" placeholder="Reference link (optional)">
       <button type="submit">Add song</button>
+      <p class="hint">
+        The audio file is required. A streaming link can’t supply it —
+        <a href="#" id="whynot">why not</a>.
+      </p>
     </form>
 
     <nav id="library" class="library"></nav>
@@ -30,6 +34,7 @@
         <h2 id="songtitle">No song selected</h2>
         <span id="songartist"></span>
       </div>
+      <button id="deletesong" class="ghostbtn" hidden>Delete song</button>
 
       <div class="transport">
         <button id="run" title="Run the transcription pipeline">Transcribe</button>
@@ -53,6 +58,21 @@
 
     <p id="status" class="status-line"></p>
     <div id="report" class="report"></div>
+
+    <section id="needaudio" class="needaudio" hidden>
+      <h3>This song has no audio yet</h3>
+      <p>
+        The pipeline needs the actual waveform. Spotify can’t provide it: the
+        Audio Analysis endpoints were closed to new apps in November 2024, and
+        the Web Playback SDK is DRM’d specifically so applications can’t reach
+        the samples. Paste a link to remember <em>which</em> song this is —
+        supply the file yourself.
+      </p>
+      <label class="filepick large">
+        <span id="addaudioname">Choose audio file</span>
+        <input type="file" id="addaudio" accept="audio/*">
+      </label>
+    </section>
 
     <section class="notation-wrap">
       <div id="notation"></div>
