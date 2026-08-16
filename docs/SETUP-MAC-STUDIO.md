@@ -6,12 +6,22 @@ per song to grind through.
 
 ## 1. Prerequisites
 
+macOS ships Python 3.9 at best. There is no system Python new enough for this,
+so this step is required, not a convenience.
+
 ```sh
-brew install python@3.11 node ffmpeg
+brew install python@3.12 node ffmpeg
 ```
 
-`ffmpeg` is not optional — librosa and Demucs both shell out to it for anything
-that is not a WAV.
+**Use 3.12.** Not 3.11 (fine, but Homebrew may no longer keg it) and
+specifically **not 3.13**, which is Homebrew's current default `python3` —
+Demucs 4.x predates it and has no wheels, so `pip install -e '.[audio]'` will
+try to build from source and fail.
+
+`ffmpeg` is not optional either — librosa and Demucs both shell out to it for
+anything that is not a WAV.
+
+If `brew` itself is missing, install Homebrew first from https://brew.sh.
 
 ## 2. Clone and install
 
@@ -19,11 +29,17 @@ that is not a WAV.
 git clone https://github.com/4list233/DongCiDaCi.git
 cd DongCiDaCi
 
-python3.11 -m venv .venv
-source .venv/bin/activate
+python3.12 -m venv .venv
+source .venv/bin/activate       # everything below assumes this is active
+```
 
-pip install -e .            # API, chart model, tests — fast, no ML
-pip install -e '.[audio]'   # the pipeline: torch, demucs, librosa — slow, large
+Note that `pip` and `dcdc` only exist *inside* the venv. If either reports
+"command not found", the venv was never created or never activated — fix that
+before anything else.
+
+```sh
+pip install -e .            # API, chart model, tests — seconds, no ML
+pip install -e '.[audio]'   # the pipeline: torch, demucs, librosa — ~2GB
 ```
 
 Then the frontend:
@@ -150,6 +166,24 @@ you want a song's audio on both machines, copy `songs/<slug>/source.*` by hand �
 deliberately not in git, since it is neither yours to redistribute nor small.
 
 ## Troubleshooting
+
+**`zsh: command not found: python3.11`** — the Homebrew Python in step 1 was
+never installed, or was installed under a different version. Check what you
+actually have with `ls /opt/homebrew/bin/python3.*` and use that version in the
+`venv` command.
+
+**`zsh: command not found: pip` or `: dcdc`** — both live inside the venv. If
+the `python3.x -m venv` line failed, nothing after it ran against a venv, and
+these will be missing. Re-run from step 2.
+
+**`pip install '.[audio]'` tries to build Demucs from source and fails** —
+you are on Python 3.13. Delete `.venv`, recreate it with `python3.12`, and
+reinstall.
+
+**`npm warn allow-scripts ... fsevents`** — newer npm defers package install
+scripts. Builds work without it; only the Vite dev server is affected, and it
+falls back to polling for file changes. Run `npm approve-scripts --allow-scripts-pending`
+in `frontend/` if you want native file watching back.
 
 **`demucs failed (exit 1)`** — usually ffmpeg. Check `ffmpeg -version`.
 

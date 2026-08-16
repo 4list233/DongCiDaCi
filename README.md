@@ -15,16 +15,31 @@ audio ──▶ separate ──▶ grid ──▶ transcribe ──▶ quantize 
 
 ## Quickstart
 
+macOS ships Python 3.9 at best, which is too old, so the prerequisites are not
+optional:
+
 ```sh
-python3.11 -m venv .venv && source .venv/bin/activate
-pip install -e '.[audio]'
-npm --prefix frontend install && npm --prefix frontend run build
-dcdc serve          # http://127.0.0.1:8000
+brew install python@3.12 node ffmpeg
 ```
 
+Use **3.12**, not 3.13 — Demucs 4.x predates 3.13 and has no wheels for it.
+`ffmpeg` is not optional either; librosa and Demucs both shell out to it for
+anything that is not a WAV.
+
+```sh
+python3.12 -m venv .venv && source .venv/bin/activate
+pip install -e '.[audio]'          # ~2GB, pulls torch
+npm --prefix frontend install && npm --prefix frontend run build
+dcdc doctor                        # which stages are live
+dcdc serve                         # http://127.0.0.1:8000
+```
+
+To see the app before committing to a 2GB download, `pip install -e .` installs
+the API and editor alone in seconds. The pipeline stages will report as missing,
+which is exactly what `dcdc doctor` is for.
+
 Full Apple Silicon instructions, including the two optional model upgrades, are
-in [docs/SETUP-MAC-STUDIO.md](docs/SETUP-MAC-STUDIO.md). Run `dcdc doctor` to
-see which stages are live.
+in [docs/SETUP-MAC-STUDIO.md](docs/SETUP-MAC-STUDIO.md).
 
 ## How it works
 
