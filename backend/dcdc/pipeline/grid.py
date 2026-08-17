@@ -92,17 +92,20 @@ def _beat_this(audio_path, beats_per_bar: int) -> Grid:
     beats = np.asarray(beats, dtype=float)
     downbeats = np.asarray(downbeats, dtype=float)
 
-    tempo, conf = _tempo_and_confidence(beats)
     warnings = []
     if len(downbeats) < 2:
         warnings.append("beat_this found fewer than two downbeats; bar detection unreliable")
 
-    missed = dropped_beats(beats)
-    if missed:
+    # Repair before measuring: bars are built by counting beats from a downbeat,
+    # so a single hole shortens one bar and displaces every bar after it.
+    beats, added = repair_beats(beats)
+    if added:
         warnings.append(
-            f"the beat tracker appears to have missed {missed} beat(s) -- bars after "
-            "each gap will be short, so check where the chart stops lining up"
+            f"filled in {added} beat(s) the tracker skipped -- their positions come "
+            "from the beats either side, but check the bars around any gap"
         )
+
+    tempo, conf = _tempo_and_confidence(beats)
 
     return Grid(
         beats=beats,
@@ -175,6 +178,64 @@ def _tempo_and_confidence(beats: np.ndarray) -> tuple[float, float]:
     return 60.0 / median, float(max(0.0, min(1.0, 1.0 - spread / 0.15)))
 
 
+def repair_beats(beats: np.ndarray, tolerance: float = 0.2) -> tuple[np.ndarray, int]:
+    """Fill in beats the tracker skipped. Returns (beats, how many were added).
+
+    A gap that is close to a whole multiple of the median interval is a missed
+    beat, and the missing beats sit at even divisions of that gap -- the band did
+    not stop playing, the tracker stopped reporting. Interpolating them is safe
+    in a way that inventing beats never would be, because their positions are
+    determined by the two beats that bracket them.
+
+    This matters more than reporting the gaps. Every bar is built by counting
+    beats from a downbeat, so one missing beat shortens a bar and shifts every
+    bar after it. Detecting that and carrying on would leave the chart wrong in
+    exactly the way that is hardest to correct by hand.
+    """
+    if len(beats) < 3:
+        return beats, 0
+
+    intervals = np.diff(beats)
+    if float(np.median(intervals)) <= 0:
+        return beats, 0
+
+    filled: list[float] = [float(beats[0])]
+    added = 0
+    for index, (start, interval) in enumerate(zip(beats[:-1], intervals)):
+        local = _local_median(intervals, index)
+        multiple = interval / local if local > 0 else 1.0
+        nearest = int(round(multiple))
+        if nearest >= 2 and abs(multiple - nearest) < tolerance:
+            step = interval / nearest
+            for k in range(1, nearest):
+                filled.append(float(start) + step * k)
+                added += 1
+        filled.append(float(start) + float(interval))
+
+    return np.asarray(filled, dtype=float), added
+
+
+# Intervals either side of a gap used to judge what "normal" is there.
+_LOCAL_WINDOW = 8
+
+
+def _local_median(intervals: np.ndarray, index: int) -> float:
+    """The typical interval near `index`, excluding the interval itself.
+
+    A global median is wrong for music that changes feel: a half-time section
+    has genuinely doubled intervals, and measuring it against the faster
+    section's median would "repair" every real beat in it into two. Judging each
+    gap against its neighbours means a sustained change moves the reference,
+    while an isolated gap still stands out.
+    """
+    lo = max(0, index - _LOCAL_WINDOW)
+    hi = min(len(intervals), index + _LOCAL_WINDOW + 1)
+    neighbours = np.concatenate([intervals[lo:index], intervals[index + 1:hi]])
+    if neighbours.size == 0:
+        return float(np.median(intervals))
+    return float(np.median(neighbours))
+
+
 def dropped_beats(beats: np.ndarray) -> int:
     """How many beats the tracker appears to have skipped.
 
@@ -182,20 +243,8 @@ def dropped_beats(beats: np.ndarray) -> int:
     change. Saying so is far more actionable than "spacing is irregular",
     because it points at the tracker rather than at the performance.
     """
-    if len(beats) < 3:
-        return 0
-    intervals = np.diff(beats)
-    median = float(np.median(intervals))
-    if median <= 0:
-        return 0
-
-    missed = 0
-    for interval in intervals:
-        multiple = interval / median
-        nearest = round(multiple)
-        if nearest >= 2 and abs(multiple - nearest) < 0.2:
-            missed += nearest - 1
-    return int(missed)
+    _, added = repair_beats(beats)
+    return added
 
 
 def _torch_device() -> str:

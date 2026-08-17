@@ -64,6 +64,10 @@ class DrumStems:
     """Paths to whichever per-instrument stems the separator produced."""
     stems: dict[str, Path] = field(default_factory=dict)
     model: str = ""
+    # Why separation produced nothing, in the words of whatever failed. Carried
+    # so the chart can say it: telling someone to run `dcdc doctor` is a dead end
+    # when doctor is clean and the failure only happens at run time.
+    error: str = ""
 
     def __bool__(self) -> bool:
         return bool(self.stems)
@@ -395,26 +399,67 @@ def separate(drums_path: Path, out_dir: Path, device: str | None = None) -> Drum
     log.info("drumsep: %s", " ".join(cmd))
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
-        tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-12:]
-        log.warning("drumsep failed (exit %d):\n%s", proc.returncode, "\n".join(tail))
-        return DrumStems()
+        lines = (proc.stderr or proc.stdout or "").strip().splitlines()
+        log.warning("drumsep failed (exit %d):\n%s", proc.returncode, "\n".join(lines[-12:]))
+        return DrumStems(error=_summarise_failure(lines, proc.returncode))
 
     shutil.rmtree(staging, ignore_errors=True)
 
     # Match against the stem names the config declares, falling back to every
-    # name we know how to map. MSST names outputs "<track>_<stem>.wav".
+    # name we know how to map.
     expected = config_instruments(config) or list(STEM_TO_LANE)
-    stems: dict[str, Path] = {}
-    for wav in sorted(out_dir.glob("*.wav")):
-        for name in expected:
-            if wav.stem.lower().endswith(f"_{name.lower()}"):
-                stems[name] = wav
-                break
+    stems = _collect_stems(out_dir, expected)
 
     if not stems:
-        log.warning("drumsep produced no recognisable stems in %s", out_dir)
+        # Naming is configurable in MSST (--filename_template), so a mismatch
+        # here produces a successful run with nothing recognised, which is
+        # indistinguishable from separation failing. List what was actually
+        # written so the mismatch is obvious rather than mysterious.
+        produced = sorted(p.name for p in out_dir.rglob("*.wav"))
+        log.warning("drumsep produced no recognisable stems in %s (found: %s)",
+                    out_dir, produced or "nothing")
+        detail = f"wrote {', '.join(produced)}" if produced else "wrote no audio at all"
+        return DrumStems(
+            model=checkpoint.name,
+            error=f"separation ran but no stem names were recognised -- it {detail}",
+        )
 
     return DrumStems(stems=stems, model=checkpoint.name)
+
+
+def _collect_stems(out_dir: Path, expected: list[str]) -> dict[str, Path]:
+    """Find each expected stem among whatever the separator wrote.
+
+    MSST's output naming is configurable, so rather than assuming one template
+    this searches recursively and accepts the stem name anywhere in the path --
+    `track_kick.wav`, `kick.wav`, or `kick/track.wav` all match. Longer names are
+    tried first so `hi-hat` is not claimed by a shorter overlapping name.
+    """
+    stems: dict[str, Path] = {}
+    candidates = sorted(out_dir.rglob("*.wav"))
+
+    for name in sorted(expected, key=len, reverse=True):
+        needle = name.lower()
+        for wav in candidates:
+            if wav in stems.values():
+                continue
+            haystack = f"{wav.parent.name}/{wav.stem}".lower()
+            if needle in haystack.replace("_", " ").replace("-", " ") or needle in haystack:
+                stems[name] = wav
+                break
+    return stems
+
+
+def _summarise_failure(lines: list[str], returncode: int) -> str:
+    """The one line from a traceback worth putting in front of someone."""
+    for line in reversed(lines):
+        text = line.strip()
+        if not text:
+            continue
+        # The exception line, not the frame that raised it.
+        if any(marker in text for marker in ("Error", "Exception", "error:")):
+            return text
+    return f"exited {returncode} with no error message"
 
 
 def _pick_device() -> str:

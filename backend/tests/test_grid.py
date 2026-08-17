@@ -63,3 +63,65 @@ class TestConfidenceIsRobust:
         del beats[15]
         tempo, _ = grid._tempo_and_confidence(np.asarray(beats))
         assert 118 < tempo < 122, tempo
+
+
+class TestRepairBeats:
+    """Filling holes matters more than reporting them: bars are built by counting
+    beats from a downbeat, so one missing beat shortens a bar and displaces every
+    bar after it."""
+
+    def test_a_clean_grid_is_untouched(self):
+        beats = np.arange(0, 10, 0.5)
+        repaired, added = grid.repair_beats(beats)
+        assert added == 0
+        assert np.allclose(repaired, beats)
+
+    def test_a_single_hole_is_filled_at_the_right_time(self):
+        beats = np.array([0.0, 0.5, 1.5, 2.0])      # 1.0 missing
+        repaired, added = grid.repair_beats(beats)
+        assert added == 1
+        assert np.allclose(repaired, [0.0, 0.5, 1.0, 1.5, 2.0])
+
+    def test_two_consecutive_holes_are_both_filled(self):
+        beats = np.array([0.0, 0.5, 2.0, 2.5])      # 1.0 and 1.5 missing
+        repaired, added = grid.repair_beats(beats)
+        assert added == 2
+        assert np.allclose(repaired, [0.0, 0.5, 1.0, 1.5, 2.0, 2.5])
+
+    def test_repair_makes_the_grid_regular(self):
+        """The point of the exercise: afterwards every interval is the same."""
+        beats = list(np.arange(0, 30, 0.5))
+        for index in (10, 25, 40):
+            del beats[index]
+        repaired, added = grid.repair_beats(np.asarray(beats))
+        assert added == 3
+        assert np.allclose(np.diff(repaired), 0.5)
+        assert grid.dropped_beats(repaired) == 0
+
+    def test_a_tempo_change_is_not_treated_as_a_hole(self):
+        """Halving the tempo genuinely doubles the interval, but every interval
+        after it doubles too, so the median moves rather than a gap appearing."""
+        beats = np.concatenate([np.arange(0, 5, 0.5), np.arange(5, 15, 1.0)])
+        _, added = grid.repair_beats(beats)
+        assert added <= 1, added
+
+    def test_an_ambiguous_gap_is_left_alone(self):
+        """1.7x the median is not a clean multiple, so guessing would be wrong."""
+        beats = np.array([0.0, 0.5, 1.35, 1.85, 2.35])
+        _, added = grid.repair_beats(beats)
+        assert added == 0
+
+    def test_too_few_beats_to_judge(self):
+        beats = np.array([0.0, 2.0])
+        repaired, added = grid.repair_beats(beats)
+        assert added == 0 and len(repaired) == 2
+
+    def test_repair_raises_confidence(self):
+        beats = list(np.arange(0, 30, 0.5))
+        for index in (10, 25, 40):
+            del beats[index]
+        before = grid._tempo_and_confidence(np.asarray(beats))[1]
+        repaired, _ = grid.repair_beats(np.asarray(beats))
+        after = grid._tempo_and_confidence(repaired)[1]
+        assert after >= before
+        assert after > 0.95

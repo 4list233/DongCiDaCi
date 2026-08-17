@@ -64,9 +64,12 @@ def run(audio_path, work_dir, title, artist="", adt_backend="auto",
             # because separation was installed and failed look identical, and
             # they need opposite fixes.
             if drumsep.is_available():
+                # Quote the real failure. Pointing at `dcdc doctor` is useless
+                # when doctor is clean and the break only happens at run time.
                 transcription.warnings.append(
                     "DrumSep is installed but produced no stems, so this fell back "
-                    "to whole-kit transcription -- run `dcdc doctor` for the reason"
+                    "to whole-kit transcription: "
+                    + (stems.error or "no reason reported")
                 )
             else:
                 transcription.warnings.append(
