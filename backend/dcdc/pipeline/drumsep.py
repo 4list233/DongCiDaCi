@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -264,27 +265,47 @@ def check() -> tuple[bool, list[str]]:
         # which pulls a GUI toolkit and pinned librosa/demucs versions that
         # downgrade a working install, and it fails to build on macOS anyway.
         problems.append(
-            f"python packages missing: {', '.join(missing)} -- run: "
-            "pip install -e '.[stems]'"
+            f"cannot import {', '.join(missing)} -- run: pip install -e '.[stems]'"
         )
 
     return not problems, problems
 
 
-# What MSST's mdx23c inference path imports at module load. Verified against
-# inference.py and utils/settings.py rather than assumed: einops is deliberately
-# absent, since only the roformer models need it and reporting it as missing
-# would send you installing something the mdx23c path never touches.
-_MSST_IMPORTS = (
-    "torch", "librosa", "soundfile", "numpy", "tqdm",
-    "yaml", "omegaconf", "ml_collections",
-)
-
-
 def _missing_imports() -> list[str]:
-    import importlib.util
+    """Actually import what the inference script imports, and report failures.
 
-    return [name for name in _MSST_IMPORTS if importlib.util.find_spec(name) is None]
+    Enumerating the dependency list by hand was wrong twice: it is not just what
+    `inference.py` imports, but everything its imports import, transitively.
+    `utils/audio_utils.py` pulls in matplotlib at module scope, which no reading
+    of the entry point reveals.
+
+    So this runs the real import in a subprocess. It cannot drift when MSST
+    changes, and it reports the module that is genuinely missing rather than the
+    one guessed at.
+    """
+    probe = (
+        "import sys; sys.path.insert(0, sys.argv[1]); "
+        "import utils.audio_utils, utils.settings, utils.model_utils"
+    )
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", probe, str(MSST_DIR)],
+            capture_output=True, text=True, timeout=180,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return [f"(could not probe: {exc})"]
+
+    if proc.returncode == 0:
+        return []
+
+    stderr = proc.stderr or ""
+    names = re.findall(r"No module named '([^']+)'", stderr)
+    if names:
+        # Only the first is reported per run, so this resolves one at a time.
+        return sorted(set(name.split(".")[0] for name in names))
+
+    tail = stderr.strip().splitlines()[-1:] or ["unknown import failure"]
+    return [f"({tail[0]})"]
 
 
 def describe_stems() -> str:

@@ -35,6 +35,10 @@ stems = [
     "omegaconf>=2.2",
     "ml_collections>=0.1",
     "einops>=0.6",
+    # utils/audio_utils.py imports pyplot at module scope for spectrogram
+    # drawing, so inference will not import without it even though nothing here
+    # draws anything.
+    "matplotlib>=3.7",
 ]
 # ISMIR 2024 beat tracker. Big accuracy win over the librosa fallback.
 beat = [

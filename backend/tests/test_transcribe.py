@@ -5,9 +5,12 @@ the part that is pure logic and the part most likely to be quietly wrong: how a
 model's General MIDI output becomes lanes and velocities.
 """
 
+from pathlib import Path
+
 import pytest
 
 from dcdc.chart import LANE_BY_KEY
+from dcdc.pipeline import transcribe
 from dcdc.pipeline.transcribe import GM_TO_LANE, GM_OPEN_HAT, ADT_CLASSES
 
 
@@ -105,3 +108,57 @@ class TestMidiVelocities:
 
         assert len(onsets) == 1
         assert unmapped == {70}
+
+
+class TestDeviceFallback:
+    """A device that cannot run the model is a reason to run it slower, not a
+    reason to abandon a real ADT model for the band-energy heuristic."""
+
+    def test_prefers_the_accelerator_but_keeps_cpu_in_reserve(self, monkeypatch):
+        monkeypatch.setattr(transcribe, "_torch_device", lambda: "mps")
+        assert transcribe._candidate_devices() == ["mps", "cpu"]
+
+    def test_cpu_only_machines_do_not_retry_themselves(self, monkeypatch):
+        monkeypatch.setattr(transcribe, "_torch_device", lambda: "cpu")
+        assert transcribe._candidate_devices() == ["cpu"]
+
+    def test_retries_on_cpu_when_the_accelerator_is_refused(self, monkeypatch):
+        """ADTOF rejects MPS outright with 'Invalid device: mps'."""
+        seen = []
+
+        def fake_adtof(path, device=None):
+            seen.append(device)
+            if device == "mps":
+                raise RuntimeError("Invalid device: mps")
+            return transcribe.Transcription(onsets=[], backend="adtof", warnings=[])
+
+        monkeypatch.setattr(transcribe, "_torch_device", lambda: "mps")
+        monkeypatch.setattr(transcribe, "_adtof", fake_adtof)
+
+        result = transcribe.transcribe(Path("x.wav"), backend="auto")
+        assert result.backend == "adtof", "should not have fallen to spectral"
+        assert seen == ["mps", "cpu"]
+
+    def test_says_when_it_had_to_drop_to_cpu(self, monkeypatch):
+        def fake_adtof(path, device=None):
+            if device != "cpu":
+                raise RuntimeError(f"Invalid device: {device}")
+            return transcribe.Transcription(onsets=[], backend="adtof", warnings=[])
+
+        monkeypatch.setattr(transcribe, "_torch_device", lambda: "mps")
+        monkeypatch.setattr(transcribe, "_adtof", fake_adtof)
+
+        result = transcribe.transcribe(Path("x.wav"), backend="auto")
+        assert any("cpu" in w for w in result.warnings), result.warnings
+
+    def test_falls_to_spectral_only_when_every_device_fails(self, monkeypatch):
+        def always_fails(path, device=None):
+            raise RuntimeError("model is broken")
+
+        monkeypatch.setattr(transcribe, "_torch_device", lambda: "mps")
+        monkeypatch.setattr(transcribe, "_adtof", always_fails)
+        monkeypatch.setattr(
+            transcribe, "_spectral",
+            lambda p: transcribe.Transcription(onsets=[], backend="spectral", warnings=[]),
+        )
+        assert transcribe.transcribe(Path("x.wav"), backend="auto").backend == "spectral"

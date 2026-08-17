@@ -52,7 +52,7 @@ class Transcription:
 def transcribe(drums_path: Path, backend: str = "auto") -> Transcription:
     if backend in ("auto", "adtof"):
         try:
-            return _adtof(drums_path)
+            return _adtof_on_any_device(drums_path)
         except ImportError:
             if backend == "adtof":
                 raise
@@ -62,6 +62,44 @@ def transcribe(drums_path: Path, backend: str = "auto") -> Transcription:
                 raise
             log.warning("adtof failed (%s), falling back to spectral", exc)
     return _spectral(drums_path)
+
+
+def _adtof_on_any_device(drums_path: Path) -> Transcription:
+    """Run the model, retrying on CPU if the accelerator refuses it.
+
+    Not every model supports every backend -- ADTOF rejects MPS outright. A
+    device that cannot run the model is a reason to run it more slowly, not a
+    reason to abandon a real ADT model for a band-energy heuristic that cannot
+    resolve toms or cymbals at all. That fall was costing whole instruments over
+    a one-line incompatibility.
+    """
+    devices = _candidate_devices()
+    failures: list[str] = []
+
+    for device in devices:
+        try:
+            transcription = _adtof(drums_path, device)
+        except ImportError:
+            raise
+        except Exception as exc:
+            failures.append(f"{device}: {exc}")
+            log.warning("adtof failed on %s (%s)", device, exc)
+            continue
+
+        if device != devices[0]:
+            transcription.warnings.append(
+                f"ran on {device} because {devices[0]} was refused -- slower, "
+                "same result"
+            )
+        return transcription
+
+    raise RuntimeError("; ".join(failures) or "no device available")
+
+
+def _candidate_devices() -> list[str]:
+    """Preferred accelerator first, CPU last as the one that always works."""
+    preferred = _torch_device()
+    return [preferred, "cpu"] if preferred != "cpu" else ["cpu"]
 
 
 # --- the real model ---------------------------------------------------------
@@ -89,7 +127,7 @@ GM_TO_LANE: dict[int, str] = {
 GM_OPEN_HAT = frozenset({46})
 
 
-def _adtof(drums_path: Path) -> Transcription:
+def _adtof(drums_path: Path, device: str | None = None) -> Transcription:
     """Bridge to ADTOF-pytorch.
 
     Writes MIDI to a temp file and reads it back rather than reaching into the
@@ -103,7 +141,8 @@ def _adtof(drums_path: Path) -> Transcription:
     with tempfile.TemporaryDirectory() as tmp:
         midi_path = Path(tmp) / "drums.mid"
         try:
-            transcribe_to_midi(str(drums_path), str(midi_path), device=_torch_device())
+            transcribe_to_midi(str(drums_path), str(midi_path),
+                               device=device or _torch_device())
         except TypeError:
             # Older signatures take only the two paths.
             transcribe_to_midi(str(drums_path), str(midi_path))

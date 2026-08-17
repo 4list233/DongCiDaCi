@@ -266,34 +266,76 @@ class TestReadiness:
         assert "install-drumsep" in joined
 
     def test_unmet_python_deps_are_named(self, model_dir, monkeypatch):
-        monkeypatch.setattr(drumsep, "_MSST_IMPORTS", ("torch", "definitely_not_installed"))
+        monkeypatch.setattr(drumsep, "_missing_imports", lambda: ["matplotlib"])
         _, problems = drumsep.check()
         joined = " ".join(problems)
-        assert "definitely_not_installed" in joined
+        assert "matplotlib" in joined
         assert "[stems]" in joined
 
     def test_never_recommends_msst_requirements(self, model_dir, monkeypatch):
         """That file is a training manifest: it fails to build on macOS and
         downgrades librosa and demucs on the way past."""
-        monkeypatch.setattr(drumsep, "_MSST_IMPORTS", ("definitely_not_installed",))
+        monkeypatch.setattr(drumsep, "_missing_imports", lambda: ["omegaconf"])
         _, problems = drumsep.check()
         assert "requirements.txt" not in " ".join(problems)
-
-    def test_einops_is_not_required(self):
-        """Only the roformer models import it; the mdx23c path never does."""
-        assert "einops" not in drumsep._MSST_IMPORTS
 
     def test_ready_when_everything_is_present(self, model_dir, monkeypatch):
         msst = model_dir / "msst"
         msst.mkdir()
         (msst / "inference.py").write_text("x")
         monkeypatch.setattr(drumsep, "MSST_DIR", msst)
-        monkeypatch.setattr(drumsep, "_MSST_IMPORTS", ())
+        monkeypatch.setattr(drumsep, "_missing_imports", list)
         (model_dir / "drumsep.ckpt").write_bytes(b"x")
         (model_dir / "config_drumsep.yaml").write_text("training:\n  instruments:\n    - kick\n")
 
         ready, problems = drumsep.check()
         assert ready and problems == []
+
+
+class TestImportProbe:
+    """Readiness is decided by really importing, not by a hand-written list.
+
+    Listing the dependencies by hand was wrong twice. It is not what
+    inference.py imports, it is what its imports import: utils/audio_utils.py
+    pulls in matplotlib at module scope, which no reading of the entry point
+    reveals, so the check reported ok for something that could not run.
+    """
+
+    def test_finds_a_transitive_import_no_entry_point_mentions(self, tmp_path, monkeypatch):
+        msst = tmp_path / "msst"
+        (msst / "utils").mkdir(parents=True)
+        (msst / "inference.py").write_text("import utils.audio_utils\n")
+        (msst / "utils" / "__init__.py").write_text("")
+        # Exactly the real shape: the entry point never mentions matplotlib.
+        (msst / "utils" / "audio_utils.py").write_text("import matplotlib.pyplot as plt\n")
+        (msst / "utils" / "settings.py").write_text("")
+        (msst / "utils" / "model_utils.py").write_text("")
+        monkeypatch.setattr(drumsep, "MSST_DIR", msst)
+
+        missing = drumsep._missing_imports()
+        assert "matplotlib" in missing, missing
+
+    def test_clean_imports_report_nothing_missing(self, tmp_path, monkeypatch):
+        msst = tmp_path / "msst"
+        (msst / "utils").mkdir(parents=True)
+        (msst / "utils" / "__init__.py").write_text("")
+        for name in ("audio_utils", "settings", "model_utils"):
+            (msst / "utils" / f"{name}.py").write_text("import os\n")
+        monkeypatch.setattr(drumsep, "MSST_DIR", msst)
+
+        assert drumsep._missing_imports() == []
+
+    def test_a_non_import_failure_is_reported_not_swallowed(self, tmp_path, monkeypatch):
+        msst = tmp_path / "msst"
+        (msst / "utils").mkdir(parents=True)
+        (msst / "utils" / "__init__.py").write_text("")
+        (msst / "utils" / "audio_utils.py").write_text("raise ValueError('boom')\n")
+        (msst / "utils" / "settings.py").write_text("")
+        (msst / "utils" / "model_utils.py").write_text("")
+        monkeypatch.setattr(drumsep, "MSST_DIR", msst)
+
+        missing = drumsep._missing_imports()
+        assert missing and "boom" in missing[0], missing
 
     def test_describe_stems_flags_unmapped_names(self, model_dir):
         pytest.importorskip("yaml")
