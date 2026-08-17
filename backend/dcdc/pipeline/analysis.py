@@ -42,8 +42,13 @@ class Analysis:
                 "beats_per_bar": self.grid.beats_per_bar,
                 "confidence": self.grid.confidence,
             },
+            # level is stored alongside velocity because the two are not
+            # interchangeable: velocity is relative to one instrument, level is
+            # absolute and is the only thing comparable across stems. Dropping it
+            # here would make a reread behave differently from the first run.
             "onsets": [
-                [round(o.time, 5), o.lane, round(o.velocity, 4)] for o in self.onsets
+                [round(o.time, 5), o.lane, round(o.velocity, 4), round(o.level, 5)]
+                for o in self.onsets
             ],
         }
 
@@ -59,7 +64,12 @@ class Analysis:
             confidence=g.get("confidence", 0.0),
         )
         return cls(
-            onsets=[Onset(time=t, lane=lane, velocity=v) for t, lane, v in raw["onsets"]],
+            # Three-element rows come from before level was recorded.
+            onsets=[
+                Onset(time=row[0], lane=row[1], velocity=row[2],
+                      level=row[3] if len(row) > 3 else 0.0)
+                for row in raw["onsets"]
+            ],
             grid=grid,
             adt_backend=raw.get("adt_backend", ""),
             grid_backend=raw.get("grid_backend", ""),

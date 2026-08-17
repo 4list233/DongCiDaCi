@@ -350,3 +350,39 @@ button:disabled:hover { border-color: var(--rule); color: inherit; }
 @media (prefers-reduced-motion: reduce) {
   * { scroll-behavior: auto !important; }
 }
+
+/* --- reading controls ----------------------------------------------------- */
+
+/* These rebuild the chart from cached analysis rather than editing it, so they
+   sit with the report they respond to rather than with the transport. */
+.reading {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+  padding: 0.5rem 0.9rem;
+  border-bottom: 1px solid var(--edge, #2a2f36);
+  font-size: 0.82rem;
+}
+
+.reading .control {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  white-space: nowrap;
+}
+
+.reading input[type="range"] { width: 8rem; }
+
+/* Tabular figures so the number does not shift the buttons as it changes. */
+.offsetlabel {
+  min-width: 1.7rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--mono, ui-monospace, monospace);
+}
+
+.reading .hint {
+  color: var(--dim, #8b949e);
+  font-style: italic;
+}

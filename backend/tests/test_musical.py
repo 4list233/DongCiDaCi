@@ -134,3 +134,55 @@ class TestEmptyInput:
     def test_no_onsets_is_safe(self):
         kept, removed = musical.clean([])
         assert kept == [] and sum(removed.values()) == 0
+
+
+class TestBleedOnlyLanes:
+    """The flaw that made phantom toms survive everything else.
+
+    detect_stem normalises velocity against each stem's own peak, so a stem
+    holding nothing but leakage normalises that leakage to 1.0. Judged on
+    velocity alone the lane looks like a drum being hit hard all track.
+    """
+
+    def test_a_lane_of_pure_bleed_is_removed_entirely(self):
+        onsets = [hit(i * 0.5, "bd", 0.9) for i in range(8)]
+        for o in onsets:
+            o.level = 0.9
+        # A toms stem with only leakage: velocity near full, level tiny.
+        for i in range(8):
+            ghost = hit(i * 0.5 + 0.2, "mt", 1.0)
+            ghost.level = 0.03
+            onsets.append(ghost)
+
+        kept, removed = musical.clean(sorted(onsets, key=lambda o: o.time), sensitivity=1.0)
+        assert {o.lane for o in kept} == {"bd"}
+        assert removed["lanes"] == 8
+
+    def test_a_genuinely_quiet_but_real_lane_survives(self):
+        """A ride played softly under a loud mix is still being played."""
+        onsets = []
+        for i in range(8):
+            k = hit(i * 0.5, "bd", 0.9); k.level = 0.9
+            r = hit(i * 0.5 + 0.25, "rd", 0.8); r.level = 0.3
+            onsets += [k, r]
+
+        kept, removed = musical.clean(sorted(onsets, key=lambda o: o.time), sensitivity=1.0)
+        assert {o.lane for o in kept} == {"bd", "rd"}
+        assert removed["lanes"] == 0
+
+    def test_bleed_within_an_instant_uses_absolute_level(self):
+        """Per-lane velocity would rate the leak as loud as the kick."""
+        kick = hit(1.0, "bd", 0.9); kick.level = 0.9
+        leak = hit(1.004, "mt", 0.95); leak.level = 0.1
+        # A second real tom hit elsewhere, so the lane is not dropped wholesale.
+        real = hit(3.0, "mt", 1.0); real.level = 0.6
+
+        kept, removed = musical.clean([kick, leak, real], sensitivity=1.0)
+        assert removed["bleed"] == 1
+        assert sorted(o.time for o in kept) == [1.0, 3.0]
+
+    def test_velocity_only_input_still_works(self):
+        """The ADTOF path reports MIDI velocity and no absolute level."""
+        onsets = [hit(1.0, "bd", 0.9), hit(1.5, "sd", 0.8), hit(2.0, "mt", 0.7)]
+        kept, removed = musical.clean(onsets, sensitivity=1.0)
+        assert len(kept) == 3 and removed["lanes"] == 0

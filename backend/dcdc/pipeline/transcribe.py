@@ -36,7 +36,15 @@ ADT_CLASSES = ("bd", "sd", "hh", "tt", "cy")
 class Onset:
     time: float          # seconds
     lane: str            # a key from chart.LANES
-    velocity: float      # 0..1
+    # How hard this hit was *for its own instrument*, 0..1. Normalised per lane,
+    # because that is what a ghost note means: quiet compared to other snare
+    # hits, not compared to a kick.
+    velocity: float
+    # Absolute loudness, on one scale across the whole kit. Needed precisely
+    # because `velocity` is not comparable between lanes: a stem containing
+    # nothing but bleed normalises its own leakage up to 1.0, and every check
+    # based on velocity alone then treats that leakage as full-force playing.
+    level: float = 0.0
     confidence: float = 1.0
     # Set during quantization when neighbouring onsets collapse into one gesture.
     rudiment: str | None = None

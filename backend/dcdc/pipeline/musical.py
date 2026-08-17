@@ -44,6 +44,11 @@ BLEED_RATIO = 0.4
 # dedicated lanes.
 MAX_HANDS = 2
 
+# A lane whose loudest hit is below this fraction of the kit's loudest is not an
+# instrument being played, it is leakage into an empty stem. Deliberately low:
+# a genuinely quiet ride under a loud mix still clears it comfortably.
+LANE_PRESENCE_RATIO = 0.12
+
 FOOT_LANES = frozenset({"bd", "hf"})
 
 # Which lane a hand keeps when it has to choose. A backbeat matters more than the
@@ -73,14 +78,50 @@ def clean(
     Returns the surviving onsets and a count of what each stage removed, because
     "we deleted 80 of your notes" is something a chart should admit to.
     """
-    removed = {"quiet": 0, "bleed": 0, "limbs": 0}
+    removed = {"quiet": 0, "bleed": 0, "limbs": 0, "lanes": 0}
     if not onsets:
         return [], removed
 
-    kept = _drop_quiet(sorted(onsets, key=lambda o: o.time), sensitivity, removed)
+    kept = _drop_bleed_lanes(sorted(onsets, key=lambda o: o.time), removed)
+    kept = _drop_quiet(kept, sensitivity, removed)
     kept = _drop_bleed(kept, removed)
     kept = _limit_limbs(kept, max_hands, removed)
     return kept, removed
+
+
+def _drop_bleed_lanes(onsets: list[Onset], removed: dict) -> list[Onset]:
+    """Remove entire lanes that contain only leakage.
+
+    This has to come first, and it has to use absolute level. A stem holding
+    nothing but bleed still normalises its own loudest leak to full scale, so
+    judged on relative velocity that lane looks like a drum being played hard
+    throughout. Compared against the rest of the kit it is obviously not there.
+
+    This is the difference between a chart with toms in the fills and a chart with
+    toms scattered through every bar.
+    """
+    levels: dict[str, float] = {}
+    for onset in onsets:
+        levels[onset.lane] = max(levels.get(onset.lane, 0.0), onset.level)
+
+    # Nothing carries absolute level (the ADTOF path gives MIDI velocity only),
+    # so there is no cross-lane comparison to make.
+    loudest = max(levels.values(), default=0.0)
+    if loudest <= 0:
+        return onsets
+
+    dead = {lane for lane, peak in levels.items() if peak < loudest * LANE_PRESENCE_RATIO}
+    if not dead:
+        return onsets
+
+    log.info("dropping lanes with no real presence: %s", sorted(dead))
+    survivors = []
+    for onset in onsets:
+        if onset.lane in dead:
+            removed["lanes"] += 1
+        else:
+            survivors.append(onset)
+    return survivors
 
 
 def _drop_quiet(onsets: list[Onset], sensitivity: float, removed: dict) -> list[Onset]:
@@ -122,15 +163,34 @@ def _drop_bleed(onsets: list[Onset], removed: dict) -> list[Onset]:
             survivors.extend(cluster)
             continue
 
-        loudest = max(o.velocity for o in cluster)
+        # Absolute level, not velocity: comparing two lanes' velocities is
+        # meaningless, since each was normalised against its own instrument.
+        scale = _levels(cluster)
+        loudest = max(scale.values())
+        if loudest <= 0:
+            survivors.extend(cluster)
+            continue
+
         threshold = loudest * BLEED_RATIO
         for onset in cluster:
             # Never let leakage reasoning delete the loudest voice of an instant.
-            if onset.velocity >= threshold:
+            if scale[id(onset)] >= threshold:
                 survivors.append(onset)
             else:
                 removed["bleed"] += 1
     return survivors
+
+
+def _levels(cluster: list[Onset]) -> dict:
+    """Comparable loudness per onset, falling back to velocity.
+
+    The ADTOF path reports MIDI velocity and no absolute level. There, velocity
+    is all there is, and it is at least consistent across lanes because one model
+    produced all of it.
+    """
+    if any(o.level > 0 for o in cluster):
+        return {id(o): o.level for o in cluster}
+    return {id(o): o.velocity for o in cluster}
 
 
 def _limit_limbs(onsets: list[Onset], max_hands: int, removed: dict) -> list[Onset]:
@@ -183,6 +243,11 @@ def _clusters(onsets: list[Onset]) -> list[list[Onset]]:
 def describe(removed: dict[str, int], kept: int) -> list[str]:
     """What was thrown away, in terms worth reading."""
     notes = []
+    if removed.get("lanes"):
+        notes.append(
+            f"dropped {removed['lanes']} hit(s) in lanes that held only bleed -- "
+            "those instruments are probably not played on this track"
+        )
     if removed.get("bleed"):
         notes.append(
             f"dropped {removed['bleed']} hit(s) that looked like bleed between stems"

@@ -300,6 +300,8 @@ def requantize(slug: str, body: RequantizeRequest):
         "bars": len(chart.bars),
         "res": report.res,
         "fit_error": report.fit_error,
+        "dropped": report.dropped,
+        "flams": report.flams,
         "warnings": report.warnings,
     }
 

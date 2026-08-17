@@ -66,6 +66,40 @@
     <p id="status" class="status-line"></p>
     <div id="report" class="report"></div>
 
+    <!--
+      Everything here rebuilds the chart from cached analysis, so it is instant
+      and repeatable. None of it re-runs separation or detection, which is the
+      whole reason the expensive half of the pipeline is cached.
+    -->
+    <div id="reading" class="reading" hidden>
+      <label class="control">
+        Sensitivity <span id="senslabel">50%</span>
+        <input id="sensitivity" type="range" min="0" max="1" step="0.05" value="0.5"
+               title="Low keeps only what was clearly played. High keeps nearly everything detected.">
+      </label>
+
+      <span class="control">
+        Downbeat
+        <button id="gridback" class="ghostbtn" title="Shift bar 1 one beat earlier">−1</button>
+        <span id="gridoffset" class="offsetlabel">0</span>
+        <button id="gridfwd" class="ghostbtn" title="Shift bar 1 one beat later">+1</button>
+      </span>
+
+      <label class="control">
+        Grid
+        <select id="res">
+          <option value="">auto</option>
+          <option value="8">8ths</option>
+          <option value="12">8th triplets</option>
+          <option value="16">16ths</option>
+          <option value="24">16th triplets</option>
+          <option value="32">32nds</option>
+        </select>
+      </label>
+
+      <span id="readingstatus" class="hint"></span>
+    </div>
+
     <section id="needaudio" class="needaudio" hidden>
       <h3>This song has no audio yet</h3>
       <p>

@@ -13,6 +13,8 @@ const state = {
   lanes: [],
   dirty: false,
   saveTimer: null,
+  // How this chart was read out of the audio, mirrored by the reading controls.
+  reading: { sensitivity: 0.5, offset_beats: 0, res: '' },
 };
 
 let editor = null;
@@ -104,6 +106,8 @@ async function refreshLibrary() {
 
 async function openSong(slug) {
   state.slug = slug;
+  // Asked once per song, not once per drag of the slider.
+  state.rereadConfirmed = false;
   history.replaceState(null, '', `?song=${slug}`);
 
   const song = await api.getSong(slug);
@@ -132,17 +136,91 @@ async function openSong(slug) {
   } else {
     state.chart = null;
     editor.setChart(null);
+    $('#reading').hidden = true;
     setStatus(song.has_audio
       ? 'Audio ready. Hit Transcribe for a first draft.'
       : 'No audio yet — this song cannot be transcribed until you add a file.');
   }
 }
 
-async function loadChart(slug) {
+async function loadChart(slug, { keepReading = false } = {}) {
   state.chart = await api.getChart(slug);
   editor.setChart(state.chart);
   player.setChart(state.chart);
   setStatus(`${state.chart.bars.length} bars · res ${state.chart.res} · ${state.chart.tempo} bpm`);
+
+  // Reflect whatever this chart was last built with, so the controls describe
+  // the chart on screen rather than resetting to defaults every time. After a
+  // reread the controls are already correct and re-deriving them would discard
+  // the grid choice, which is not recorded on the chart.
+  if (!keepReading) {
+    const source = state.chart.source || {};
+    state.reading = {
+      sensitivity: source.sensitivity ?? 0.5,
+      offset_beats: source.offset_beats ?? 0,
+      res: '',
+    };
+  }
+  syncReadingControls();
+}
+
+// --- rereading --------------------------------------------------------------
+
+/**
+ * Rebuild the chart from cached analysis.
+ *
+ * These are the corrections that are not editing: how much of what was detected
+ * counts as played, and where bar one is. They rebuild rather than modify, so
+ * they cannot be applied to a chart you have already edited by hand without
+ * discarding that work -- which is why this asks first.
+ */
+function syncReadingControls() {
+  const reading = state.reading || { sensitivity: 0.5, offset_beats: 0, res: '' };
+  $('#reading').hidden = !state.chart;
+  $('#sensitivity').value = reading.sensitivity;
+  $('#senslabel').textContent = `${Math.round(reading.sensitivity * 100)}%`;
+  $('#gridoffset').textContent = reading.offset_beats > 0
+    ? `+${reading.offset_beats}` : `${reading.offset_beats}`;
+  $('#res').value = reading.res || '';
+}
+
+async function reread(changes) {
+  if (!state.slug || !state.chart) return;
+
+  if (state.dirty && !state.rereadConfirmed) {
+    const ok = confirm(
+      'This rebuilds the chart from the original audio analysis and will discard '
+      + 'your edits to it. Continue?'
+    );
+    if (!ok) {
+      syncReadingControls();     // put the control back where it was
+      return;
+    }
+    state.rereadConfirmed = true;
+  }
+
+  state.reading = { ...state.reading, ...changes };
+  syncReadingControls();
+
+  // Coalesce a dragged slider into one request per pause.
+  clearTimeout(state.rereadTimer);
+  state.rereadTimer = setTimeout(async () => {
+    const hint = $('#readingstatus');
+    hint.textContent = 'rereading…';
+    try {
+      const result = await api.requantize(state.slug, {
+        sensitivity: state.reading.sensitivity,
+        offset_beats: state.reading.offset_beats,
+        res: state.reading.res ? Number(state.reading.res) : null,
+      });
+      state.dirty = false;
+      await loadChart(state.slug, { keepReading: true });
+      renderReport({ report: result });
+      hint.textContent = '';
+    } catch (err) {
+      hint.textContent = err.message;
+    }
+  }, 180);
 }
 
 // --- editing ----------------------------------------------------------------
@@ -342,6 +420,22 @@ function bindControls() {
     if (ev.target.value === 'synth') player.useSynth();
     else player.useBackingTrack();
   });
+
+  $('#sensitivity').addEventListener('input', (ev) => {
+    const value = Number(ev.target.value);
+    // Update the label immediately; the rebuild itself is debounced.
+    $('#senslabel').textContent = `${Math.round(value * 100)}%`;
+    reread({ sensitivity: value });
+  });
+
+  $('#gridback').addEventListener('click', () => {
+    reread({ offset_beats: (state.reading?.offset_beats ?? 0) - 1 });
+  });
+  $('#gridfwd').addEventListener('click', () => {
+    reread({ offset_beats: (state.reading?.offset_beats ?? 0) + 1 });
+  });
+
+  $('#res').addEventListener('change', (ev) => reread({ res: ev.target.value }));
 
   $('#speed').addEventListener('input', (ev) => {
     const factor = Number(ev.target.value);

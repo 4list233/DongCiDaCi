@@ -86,11 +86,14 @@ def detect_stem(
     normalised = np.clip(loudness / reference, 0.0, 1.0)
 
     onsets = []
-    for time, velocity in zip(times, normalised):
+    for time, velocity, absolute in zip(times, normalised, loudness):
         if velocity < BLEED_FLOOR:
             continue
+        # Both scales are kept: `velocity` is relative to this instrument and is
+        # what makes a ghost note legible, `level` is absolute and is the only
+        # thing that can be compared against the other stems.
         onsets.append(Onset(time=float(time), lane=lane, velocity=float(velocity),
-                            confidence=0.9))
+                            level=float(absolute), confidence=0.9))
     return onsets
 
 
