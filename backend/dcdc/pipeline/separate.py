@@ -25,6 +25,9 @@ DEFAULT_MODEL = "htdemucs"
 @dataclass
 class SeparationResult:
     drums: Path
+    # Everything except the drums. Free from the same pass, and it is what the
+    # play-along modes need: the song with a drum-shaped hole in it.
+    no_drums: Path | None
     model: str
     device: str
 
@@ -82,21 +85,29 @@ def separate(
             "demucs failed (exit %d):\n%s" % (proc.returncode, "\n".join(tail))
         )
 
-    # Demucs writes to <out>/<model>/<track name>/drums.wav
-    stem = out_dir / model / audio.stem / "drums.wav"
-    if not stem.exists():
-        found = list(out_dir.rglob("drums.wav"))
-        if not found:
-            raise RuntimeError(f"demucs reported success but no drums.wav under {out_dir}")
-        stem = found[0]
+    # Demucs writes to <out>/<model>/<track name>/{drums,no_drums}.wav
+    produced = out_dir / model / audio.stem
 
-    # Flatten it up to a predictable location and drop demucs' nesting.
-    final = out_dir / "drums.wav"
-    if stem != final:
-        shutil.move(str(stem), str(final))
-        shutil.rmtree(out_dir / model, ignore_errors=True)
+    def take(name: str) -> Path | None:
+        src = produced / f"{name}.wav"
+        if not src.exists():
+            candidates = list(out_dir.rglob(f"{name}.wav"))
+            if not candidates:
+                return None
+            src = candidates[0]
+        dest = out_dir / f"{name}.wav"
+        if src != dest:
+            shutil.move(str(src), str(dest))
+        return dest
 
-    return SeparationResult(drums=final, model=model, device=device)
+    drums = take("drums")
+    no_drums = take("no_drums")
+    shutil.rmtree(out_dir / model, ignore_errors=True)
+
+    if drums is None:
+        raise RuntimeError(f"demucs reported success but produced no drums.wav under {out_dir}")
+
+    return SeparationResult(drums=drums, no_drums=no_drums, model=model, device=device)
 
 
 def is_available() -> bool:

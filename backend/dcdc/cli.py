@@ -116,7 +116,7 @@ def _serve(args) -> int:
 
 
 def _doctor() -> int:
-    from .pipeline import fetch, separate, transcribe
+    from .pipeline import drumsep, fetch, separate, transcribe
 
     def mark(ok: bool) -> str:
         return "ok     " if ok else "MISSING"
@@ -135,6 +135,7 @@ def _doctor() -> int:
     print(f"device            {separate.pick_device()}")
     print(f"yt-dlp            {mark(fetch.is_available())}   stage 0, audio from a link")
     print(f"demucs            {mark(separate.is_available())}   stage 1, drum isolation")
+    print(f"drumsep           {mark(drumsep.is_available())}   stage 1b, per-instrument stems")
     print(f"beat_this         {mark(has_beat_this)}   stage 2, preferred beat tracker")
     print(f"librosa           {mark(has_librosa)}   stage 2/3 fallback")
     print(f"adtof             {mark(transcribe.is_adtof_available())}   stage 3, real ADT model")
@@ -152,6 +153,9 @@ def _doctor() -> int:
     if not transcribe.is_adtof_available():
         print("\nrunning on the spectral fallback -- kick/snare/hi-hat only, no ghost notes:")
         print("  git clone https://github.com/xavriley/ADTOF-pytorch && pip install -e ADTOF-pytorch")
+    if not drumsep.is_available():
+        print()
+        print(drumsep.install_hint())
     return 0
 
 

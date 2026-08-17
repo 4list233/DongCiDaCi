@@ -74,6 +74,14 @@ class Store:
     def notes_path(self, slug: str) -> Path:
         return self.dir(slug) / "notes.md"
 
+    def analysis_path(self, slug: str) -> Path:
+        return self.dir(slug) / "analysis.json"
+
+    def stem_path(self, slug: str, name: str) -> Path | None:
+        """A separated stem, if it exists. `name` is 'drums' or 'no_drums'."""
+        path = self.dir(slug) / "stems" / f"{name}.wav"
+        return path if path.exists() else None
+
     def audio_path(self, slug: str) -> Path | None:
         song = self.get(slug)
         if not song or not song.audio_file:

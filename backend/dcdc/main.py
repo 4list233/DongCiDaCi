@@ -22,7 +22,8 @@ from pydantic import BaseModel
 from .chart import Chart, ChartError, LANES, ARTICULATIONS
 from .jobs import JobRunner
 from .store import Store
-from .pipeline import fetch, separate, transcribe
+from . import pipeline
+from .pipeline import drumsep, fetch, separate, transcribe
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger(__name__)
@@ -65,6 +66,15 @@ class TranscribeOptions(BaseModel):
     res: int | None = None
 
 
+class RequantizeRequest(BaseModel):
+    # Rotate which beat is the downbeat. This is the "the chart is displaced by
+    # a beat" control, and it is the most common correction there is.
+    offset_beats: int = 0
+    # Nudge every onset, for detection that sits consistently early or late.
+    offset_ms: float = 0.0
+    res: int | None = None
+
+
 class FetchRequest(BaseModel):
     url: str
     title: str = ""
@@ -86,6 +96,7 @@ def health():
         "songs_dir": str(SONGS_DIR),
         "demucs": separate.is_available(),
         "adtof": transcribe.is_adtof_available(),
+        "drumsep": drumsep.is_available(),
         "ytdlp": fetch.is_available(),
         "device": separate.pick_device(),
     }
@@ -210,6 +221,55 @@ def get_audio(slug: str):
     if not path:
         raise HTTPException(404, "no audio uploaded for this song")
     return FileResponse(path)
+
+
+@app.get("/api/songs/{slug}/stem/{name}")
+def get_stem(slug: str, name: str):
+    """Serve a separated stem.
+
+    `no_drums` is the play-along track: the song with the drums removed, which
+    Demucs produces in the same pass as the drum stem.
+    """
+    if name not in ("drums", "no_drums"):
+        raise HTTPException(400, "stem must be 'drums' or 'no_drums'")
+    path = store.stem_path(slug, name)
+    if not path:
+        raise HTTPException(404, f"no {name} stem -- run a transcription first")
+    return FileResponse(path)
+
+
+@app.post("/api/songs/{slug}/requantize")
+def requantize(slug: str, body: RequantizeRequest):
+    """Rebuild the chart from cached analysis with a different alignment.
+
+    This is the fix for "the whole chart is displaced by a beat". It re-runs
+    only the quantizer, so it returns immediately rather than re-separating and
+    re-transcribing a four-minute song.
+    """
+    song = store.get(slug)
+    if not song:
+        raise HTTPException(404, f"no song {slug!r}")
+
+    path = store.analysis_path(slug)
+    if not path.exists():
+        raise HTTPException(
+            409,
+            "no cached analysis for this song -- it predates analysis caching, "
+            "so run a transcription once more",
+        )
+
+    record = pipeline.analysis.Analysis.load(path)
+    chart, report = pipeline.requantize(
+        record, title=song.title, artist=song.artist,
+        res=body.res, offset_beats=body.offset_beats, offset_ms=body.offset_ms,
+    )
+    store.save_chart(slug, chart)
+    return {
+        "bars": len(chart.bars),
+        "res": report.res,
+        "fit_error": report.fit_error,
+        "warnings": report.warnings,
+    }
 
 
 # --- transcription ----------------------------------------------------------

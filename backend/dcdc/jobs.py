@@ -129,7 +129,7 @@ class JobRunner:
                     progress=progress_floor + frac * span,
                 )
 
-            chart, report = pipeline.run(
+            chart, report, record = pipeline.run(
                 audio_path=audio,
                 work_dir=self.store.dir(slug),
                 title=song.title,
@@ -137,6 +137,8 @@ class JobRunner:
                 progress=progress,
                 **options,
             )
+            # Cache the expensive half so re-aligning the grid is instant.
+            record.save(self.store.analysis_path(slug))
 
             # First machine output for this song also becomes the immutable
             # raw.json baseline.
@@ -157,6 +159,8 @@ class JobRunner:
                     "flams": report.flams,
                     "bars": len(chart.bars),
                     "warnings": report.warnings,
+                    "adt_backend": chart.source.get("adt_backend", ""),
+                    "kit_model": chart.source.get("kit_model", ""),
                 },
             )
             log.info("transcribed %s: %d bars at res %d", slug, len(chart.bars), report.res)
