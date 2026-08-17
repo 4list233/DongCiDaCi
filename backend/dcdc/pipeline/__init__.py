@@ -9,7 +9,7 @@ __all__ = [
 
 
 def run(audio_path, work_dir, title, artist="", adt_backend="auto",
-        grid_backend="auto", res=None, progress=None):
+        grid_backend="auto", res=None, sensitivity=0.5, progress=None):
     """Audio in, (Chart, report, Analysis) out.
 
     The transcription path is chosen by what is installed, in descending order
@@ -79,7 +79,8 @@ def run(audio_path, work_dir, title, artist="", adt_backend="auto",
 
     step("quantizing", 0.90)
     chart, report = quantize.quantize(
-        transcription, beat_grid, title=title, artist=artist, res=res
+        transcription, beat_grid, title=title, artist=artist, res=res,
+        sensitivity=sensitivity,
     )
     chart.source.update({
         "separation_model": sep.model,
@@ -100,15 +101,18 @@ def run(audio_path, work_dir, title, artist="", adt_backend="auto",
     return chart, report, record
 
 
-def requantize(record, title, artist="", res=None, offset_beats=0, offset_ms=0.0):
+def requantize(record, title, artist="", res=None, offset_beats=0, offset_ms=0.0,
+               sensitivity=0.5):
     """Rebuild a chart from cached analysis. Milliseconds, no models."""
     shifted = record.shifted(offset_beats=offset_beats, offset_ms=offset_ms)
     chart, report = quantize.quantize(
-        shifted.transcription(), shifted.grid, title=title, artist=artist, res=res
+        shifted.transcription(), shifted.grid, title=title, artist=artist, res=res,
+        sensitivity=sensitivity,
     )
     chart.source.update({
         "adt_backend": record.adt_backend,
         "offset_beats": offset_beats,
         "offset_ms": offset_ms,
+        "sensitivity": sensitivity,
     })
     return chart, report

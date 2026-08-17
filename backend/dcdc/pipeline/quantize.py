@@ -24,6 +24,7 @@ import numpy as np
 
 from ..chart import Bar, Chart, SyncPoint, CYMBAL_LANES
 from .grid import Grid
+from . import musical
 from .transcribe import Onset, Transcription
 
 log = logging.getLogger(__name__)
@@ -82,12 +83,20 @@ def quantize(
     title: str,
     artist: str = "",
     res: int | None = None,
+    sensitivity: float = 0.5,
 ) -> tuple[Chart, QuantizeReport]:
     onsets = sorted(transcription.onsets, key=lambda o: o.time)
     warnings = list(transcription.warnings) + list(grid.warnings)
 
     if grid.n_bars == 0:
         raise ValueError("grid has no complete bars; beat detection probably failed")
+
+    # Reduce what was heard to what could have been played, before quantizing.
+    # Doing it here rather than during detection means sensitivity can be retuned
+    # from cached analysis in milliseconds, instead of re-running separation to
+    # find out whether a lower setting reads better.
+    onsets, discarded = musical.clean(onsets, sensitivity=sensitivity)
+    warnings.extend(musical.describe(discarded, len(onsets)))
 
     onsets, flam_count = _merge_flams(onsets)
 

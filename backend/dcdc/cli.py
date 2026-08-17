@@ -25,6 +25,8 @@ def main(argv: list[str] | None = None) -> int:
     p_tr.add_argument("-a", "--artist", default="")
     p_tr.add_argument("-o", "--out", type=Path, default=None, help="chart.json path")
     p_tr.add_argument("--res", type=int, default=None, help="force subdivisions per bar")
+    p_tr.add_argument("--sensitivity", type=float, default=0.5,
+                      help="0 keeps only clear hits, 1 keeps nearly everything detected")
     p_tr.add_argument("--adt", default="auto", choices=["auto", "adtof", "spectral"])
     p_tr.add_argument("--grid", default="auto", choices=["auto", "beat_this", "librosa"])
 
@@ -83,9 +85,10 @@ def _transcribe(args) -> int:
     def progress(stage: str, frac: float) -> None:
         print(f"  [{frac:>4.0%}] {stage}", file=sys.stderr)
 
-    chart, report = pipeline.run(
+    chart, report, _analysis = pipeline.run(
         audio_path=args.audio, work_dir=work, title=title, artist=args.artist,
-        adt_backend=args.adt, grid_backend=args.grid, res=args.res, progress=progress,
+        adt_backend=args.adt, grid_backend=args.grid, res=args.res,
+        sensitivity=args.sensitivity, progress=progress,
     )
 
     out = args.out or args.audio.with_name("chart.json")

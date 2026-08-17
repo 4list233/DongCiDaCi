@@ -40,14 +40,24 @@ def detect_stem(
     y: np.ndarray,
     sr: int,
     lane: str,
-    delta: float = 0.07,
-    min_gap_s: float = 0.025,
+    delta: float = 0.12,
+    min_gap_s: float = 0.04,
 ) -> list[Onset]:
     """Find hits in a single-instrument stem, with velocities.
 
-    `delta` is deliberately lower than a whole-kit detector would use: the stem
-    only contains one instrument, so a quiet peak is a quiet hit rather than a
-    different drum, and that is precisely the ghost note we do not want to miss.
+    An earlier version set `delta` very low, reasoning that a stem holds one
+    instrument so a quiet peak must be a quiet hit. That was wrong: stems are not
+    clean. Separation leaks, so the toms stem carries kick and snare and the
+    cymbal stems carry hat, and a low threshold turns that leakage into notes --
+    faithful to the audio, wrong about the performance.
+
+    So detection is deliberately conservative here, and what survives is decided
+    afterwards by `musical.clean`, where a hit can be judged against the other
+    stems at the same instant instead of in isolation.
+
+    `min_gap_s` of 40ms allows roughly 25 hits a second in one lane, which is
+    past the fastest single-limb playing and well short of turning a cymbal's
+    decay into a roll.
     """
     import librosa
 
@@ -183,9 +193,10 @@ def transcribe_stems(
             warnings.append(f"could not read the {lane} stem: {exc}")
             continue
 
-        # Cymbals and hats need a higher threshold: they are noisy and a low
-        # delta turns a single crash's decay into a stream of phantom hits.
-        delta = 0.10 if lane in ("rd", "cc", "hh") else 0.06
+        # Cymbals ring for seconds, so their decay is what turns into phantom
+        # hits; they need the most headroom. Kick and snare are transient and
+        # tolerate a lower threshold.
+        delta = 0.18 if lane in ("rd", "cc") else 0.14 if lane == "hh" else 0.10
         found = detect_stem(y, sr, lane, delta=delta)
 
         if lane == "mt":

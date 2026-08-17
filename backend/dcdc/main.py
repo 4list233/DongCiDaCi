@@ -64,6 +64,7 @@ class TranscribeOptions(BaseModel):
     adt_backend: str = "auto"
     grid_backend: str = "auto"
     res: int | None = None
+    sensitivity: float = 0.5
 
 
 class RequantizeRequest(BaseModel):
@@ -73,6 +74,8 @@ class RequantizeRequest(BaseModel):
     # Nudge every onset, for detection that sits consistently early or late.
     offset_ms: float = 0.0
     res: int | None = None
+    # 0 keeps only what is clearly played, 1 keeps nearly everything detected.
+    sensitivity: float = 0.5
 
 
 class FetchRequest(BaseModel):
@@ -290,6 +293,7 @@ def requantize(slug: str, body: RequantizeRequest):
     chart, report = pipeline.requantize(
         record, title=song.title, artist=song.artist,
         res=body.res, offset_beats=body.offset_beats, offset_ms=body.offset_ms,
+        sensitivity=body.sensitivity,
     )
     store.save_chart(slug, chart)
     return {
