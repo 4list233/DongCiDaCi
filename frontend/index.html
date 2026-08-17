@@ -6,7 +6,10 @@
   <title>DongCiDaCi</title>
 </head>
 <body>
-  <aside class="sidebar">
+  <button id="sidebartoggle" class="sidebartoggle" aria-label="Show or hide the library"
+          aria-expanded="true" title="Library">☰</button>
+
+  <aside class="sidebar" id="sidebar">
     <h1>DongCiDaCi</h1>
     <p id="capabilities" class="capabilities"></p>
 
@@ -51,8 +54,10 @@
         <label class="control">
           Sound
           <select id="source">
-            <option value="backing">Original recording</option>
-            <option value="synth">My chart</option>
+            <option value="original">Original recording</option>
+            <option value="nodrums">Backing only (no drums)</option>
+            <option value="both">Backing + my chart</option>
+            <option value="chart">My chart only</option>
           </select>
         </label>
 
@@ -126,6 +131,11 @@
     <section class="notation-wrap">
       <div id="notation"></div>
     </section>
+
+    <!-- Drag to rebalance notation against the grid. How much of each you want
+         depends on what you are doing: reading the part, or fixing it. -->
+    <div id="splitter" class="splitter" role="separator" aria-orientation="horizontal"
+         tabindex="0" aria-label="Resize the notation and grid panes"></div>
 
     <section class="editor-wrap">
       <div class="legend">

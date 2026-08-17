@@ -178,8 +178,13 @@ button:disabled:hover { border-color: var(--rule); color: inherit; }
 
 .main {
   display: grid;
-  grid-template-rows: auto auto auto minmax(8rem, 42%) 1fr;
+  /* topbar · status · report · reading · needaudio · notation · splitter · grid.
+     The notation share is a variable so the splitter can move it, rather than a
+     fixed percentage that is wrong for every screen except the one it was
+     chosen on. */
+  grid-template-rows: auto auto auto auto auto var(--split, 42%) auto 1fr;
   overflow: hidden;
+  min-width: 0;
 }
 
 .topbar {
@@ -385,4 +390,93 @@ button:disabled:hover { border-color: var(--rule); color: inherit; }
 .reading .hint {
   color: var(--dim, #8b949e);
   font-style: italic;
+}
+
+/* --- adjustable layout ---------------------------------------------------- */
+
+/* A grab handle rather than a fixed split: how much notation against how much
+   grid depends on whether you are reading the part or fixing it. */
+.splitter {
+  height: 7px;
+  cursor: row-resize;
+  background: var(--rule);
+  border: none;
+  position: relative;
+  flex: none;
+}
+
+.splitter::after {
+  content: "";
+  position: absolute;
+  inset: 2px 45%;
+  border-radius: 2px;
+  background: var(--ink-3, #8b949e);
+  opacity: 0.35;
+}
+
+.splitter:hover::after,
+.splitter:focus-visible::after { opacity: 0.8; }
+.splitter:focus-visible { outline: 2px solid var(--accent, #d9a441); outline-offset: -2px; }
+
+/* Dragging over an iframe-free page still selects text without this. */
+body.dragging { user-select: none; cursor: row-resize; }
+
+.sidebartoggle {
+  display: none;              /* only needed once the sidebar can hide */
+  position: fixed;
+  top: 0.55rem;
+  left: 0.55rem;
+  z-index: 20;
+  padding: 0.3rem 0.55rem;
+  line-height: 1;
+  font-size: 1rem;
+}
+
+/* The warning list is the first thing to overflow on a short screen, and it was
+   clipping mid-sentence. Cap it and let it scroll instead. */
+.report {
+  max-height: 8.5rem;
+  overflow-y: auto;
+}
+
+/* --- narrow screens ------------------------------------------------------- */
+
+/* Below this the sidebar costs more than it gives, so it slides away and is
+   summoned by the toggle. */
+@media (max-width: 900px) {
+  body { grid-template-columns: 1fr; }
+
+  .sidebartoggle { display: block; }
+
+  .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: min(19rem, 85vw);
+    z-index: 15;
+    transform: translateX(-100%);
+    transition: transform 0.18s ease;
+    box-shadow: 0 0 2rem rgba(0, 0, 0, 0.45);
+  }
+
+  body.sidebar-open .sidebar { transform: none; }
+
+  /* Leave room for the toggle sitting over the title. */
+  .topbar { padding-left: 3rem; }
+}
+
+/* Phone-width: the transport must stay reachable, so let it wrap freely and
+   drop the labels that only repeat what the control shows. */
+@media (max-width: 620px) {
+  .topbar { gap: 0.5rem; padding: 0.6rem 0.6rem 0.6rem 3rem; }
+  .transport { width: 100%; justify-content: flex-start; }
+  .reading { gap: 0.75rem; }
+  .reading input[type="range"] { width: 6rem; }
+  .legend .chars { display: none; }
+}
+
+/* Short screens: notation and grid both need a floor, or one collapses to
+   nothing and the splitter cannot be grabbed to fix it. */
+@media (max-height: 700px) {
+  .main { grid-template-rows: auto auto auto auto auto minmax(6rem, var(--split, 38%)) auto minmax(6rem, 1fr); }
+  .report { max-height: 5rem; }
 }

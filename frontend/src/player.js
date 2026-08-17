@@ -18,11 +18,20 @@
 import * as alphaTab from '@coderline/alphatab';
 import { chartToAlphaTex } from './alphatex.js';
 
+// How far the stripped recording may drift from the score before it is
+// pulled back. Below roughly this, a listener hears one performance.
+const STEM_DRIFT_TOLERANCE_S = 0.05;
+
 export class Player {
-  constructor(host, { onBarChange, onReady } = {}) {
+  constructor(host, { onBarChange, onReady, onStemError } = {}) {
     this.host = host;
     this.onBarChange = onBarChange || (() => {});
     this.onReady = onReady || (() => {});
+    this.onStemError = onStemError || (() => {});
+    this.mode = 'original';
+    this.originalUrl = null;
+    this.stemUrl = null;
+    this.stem = null;
     this.chart = null;
     this.articulations = undefined;
     this.audioBytes = null;
@@ -48,7 +57,13 @@ export class Player {
 
     // alphaTab reports position continuously; only bar changes are interesting.
     this.api.playerPositionChanged.on((args) => {
-      const bar = this._barAt(args.currentTime / 1000);
+      // In 'both' mode the synth is the clock, so this is also where the
+      // stripped recording gets pulled back into line.
+      if (this.stem) this._followStem(args.currentTick);
+
+      const bar = this.mode === 'both'
+        ? this._barAtTick(args.currentTick)
+        : this._barAt(args.currentTime / 1000);
       if (bar !== this._lastBar) {
         this._lastBar = bar;
         this.onBarChange(bar);
@@ -130,6 +145,18 @@ export class Player {
     this.api.updateSyncPoints();
   }
 
+  /** Which bar a score tick falls in. Used when the synth drives playback. */
+  _barAtTick(tick) {
+    const bars = this.api.score?.masterBars;
+    if (!bars?.length) return null;
+    let index = 0;
+    for (let i = 0; i < bars.length; i += 1) {
+      if (bars[i].start <= tick) index = i;
+      else break;
+    }
+    return index + 1;
+  }
+
   /** Which bar is sounding at a given wall-clock second in the recording. */
   _barAt(seconds) {
     const sync = this.chart?.sync;
@@ -168,20 +195,136 @@ export class Player {
     this.api.playbackRange = null;
   }
 
-  /** Switch back to hearing your own chart instead of the record. */
-  useSynth() {
-    this.api.settings.player.playerMode = alphaTab.PlayerMode.EnabledSynthesizer;
-    this.api.updateSettings();
+  /**
+   * Choose what you hear.
+   *
+   *   original   the record as released
+   *   nodrums    the record with the drums removed -- what you play along to
+   *   chart      only the transcription, on the synth
+   *   both       the stripped record with the transcribed drums played over it,
+   *              which is the only way to judge whether the chart is *right*
+   *              rather than merely plausible
+   *
+   * `both` cannot use alphaTab's backing-track mode, because that mode plays
+   * audio instead of synthesizing rather than as well. So the synth is the clock
+   * and the stripped recording is slaved to it.
+   */
+  async setMode(mode) {
+    this.mode = mode;
+    this._detachStem();
+
+    if (mode === 'chart') {
+      this.api.settings.player.playerMode = alphaTab.PlayerMode.EnabledSynthesizer;
+      this.api.updateSettings();
+      return;
+    }
+
+    if (mode === 'both') {
+      this.api.settings.player.playerMode = alphaTab.PlayerMode.EnabledSynthesizer;
+      this.api.updateSettings();
+      await this._attachStem();
+      return;
+    }
+
+    // original / nodrums: alphaTab plays the audio and follows it via sync
+    // points, which is more accurate than anything done by hand.
+    const url = mode === 'nodrums' ? this.stemUrl : this.originalUrl;
+    if (!url) return;
+    await this.setBackingTrack(url);
   }
 
-  useBackingTrack() {
-    if (this.audioBytes) this._applyBackingTrack();
+  /**
+   * Play the drums-removed recording underneath the synthesized chart.
+   *
+   * The two are kept together by correcting the audio toward where the score
+   * says it should be, rather than starting both and hoping. A performance
+   * drifts against a fixed tempo, so without correction they separate audibly
+   * within a chorus.
+   */
+  async _attachStem() {
+    if (!this.stemUrl) return;
+
+    const audio = new Audio(this.stemUrl);
+    audio.preload = 'auto';
+    audio.playbackRate = this.api.playbackSpeed || 1;
+
+    // Report a missing stem rather than failing silently to no sound at all.
+    audio.addEventListener('error', () => {
+      this.onStemError?.('no drums-removed stem for this song — re-transcribe to produce one');
+      this._detachStem();
+    });
+
+    this.stem = audio;
   }
+
+  _detachStem() {
+    if (!this.stem) return;
+    this.stem.pause();
+    this.stem = null;
+  }
+
+  /** Nudge the stem back toward the score position when it has drifted. */
+  _followStem(currentTick) {
+    if (!this.stem || this.stem.readyState < 2) return;
+
+    const target = this._recordingTimeAtTick(currentTick);
+    if (target == null) return;
+
+    const drift = Math.abs(this.stem.currentTime - target);
+    // Correct only past what a listener would notice. Constant nudging is
+    // audible as a stutter and is worse than the drift it fixes.
+    if (drift > STEM_DRIFT_TOLERANCE_S) this.stem.currentTime = target;
+  }
+
+  /** Where in the recording a score tick falls, via the chart's sync points. */
+  _recordingTimeAtTick(tick) {
+    const sync = this.chart?.sync;
+    const bars = this.api.score?.masterBars;
+    if (!sync?.length || !bars?.length) return null;
+
+    let index = 0;
+    for (let i = 0; i < bars.length; i += 1) {
+      if (bars[i].start <= tick) index = i;
+      else break;
+    }
+
+    const point = sync[index] || sync[sync.length - 1];
+    const next = sync[index + 1];
+    const barStart = bars[index].start;
+    const barTicks = (bars[index + 1]?.start ?? barStart + 3840) - barStart;
+    if (!barTicks) return point.time;
+
+    const within = Math.min(Math.max((tick - barStart) / barTicks, 0), 1);
+    const span = next ? next.time - point.time : 0;
+    return point.time + within * span;
+  }
+
+  /** Switch back to hearing your own chart instead of the record. */
+  useSynth() { return this.setMode('chart'); }
+
+  useBackingTrack() { return this.setMode('original'); }
 
   setSpeed(factor) {
     this.api.playbackSpeed = factor;
+    if (this.stem) this.stem.playbackRate = factor;
   }
 
-  playPause() { this.api.playPause(); }
-  stop() { this.api.stop(); }
+  playPause() {
+    this.api.playPause();
+    if (this.stem) {
+      if (this.api.playerState === alphaTab.synth.PlayerState.Playing) {
+        this.stem.play().catch(() => {});
+      } else {
+        this.stem.pause();
+      }
+    }
+  }
+
+  stop() {
+    this.api.stop();
+    if (this.stem) {
+      this.stem.pause();
+      this.stem.currentTime = 0;
+    }
+  }
 }

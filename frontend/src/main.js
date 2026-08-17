@@ -3,6 +3,7 @@
 import { api, watchJob } from './api.js';
 import { GridEditor } from './editor.js';
 import { Player } from './player.js';
+import { initLayout } from './layout.js';
 import './style.css';
 
 const $ = (sel) => document.querySelector(sel);
@@ -35,10 +36,13 @@ async function boot() {
 
   player = new Player($('#notation'), {
     onBarChange: (bar) => editor.setActiveBar(bar),
+    onStemError: (message) => setStatus(message),
   });
   player.setVocabulary(state.lanes);
 
   bindControls();
+  // alphaTab lays out to the width it is given, so a resize has to tell it.
+  initLayout({ onResize: () => player?.api?.render?.() });
   await refreshLibrary();
 
   const slug = new URLSearchParams(location.search).get('song');
@@ -132,7 +136,13 @@ async function openSong(slug) {
 
   if (song.has_chart) {
     await loadChart(slug);
-    if (song.has_audio) player.setBackingTrack(api.audioUrl(slug));
+    if (song.has_audio) {
+      // Both sources up front: switching what you hear should not wait on a
+      // fetch, and the drums-removed stem is what the play-along modes need.
+      player.originalUrl = api.audioUrl(slug);
+      player.stemUrl = api.stemUrl(slug, 'no_drums');
+      await player.setMode($('#source').value || 'original');
+    }
   } else {
     state.chart = null;
     editor.setChart(null);
@@ -416,10 +426,7 @@ function bindControls() {
   $('#playpause').addEventListener('click', () => player.playPause());
   $('#stop').addEventListener('click', () => player.stop());
 
-  $('#source').addEventListener('change', (ev) => {
-    if (ev.target.value === 'synth') player.useSynth();
-    else player.useBackingTrack();
-  });
+  $('#source').addEventListener('change', (ev) => player.setMode(ev.target.value));
 
   $('#sensitivity').addEventListener('input', (ev) => {
     const value = Number(ev.target.value);

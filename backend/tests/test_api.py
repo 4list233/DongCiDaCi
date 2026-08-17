@@ -137,3 +137,32 @@ class TestNoDuplicatePileUp:
         client.post("/api/songs", json={"title": "Two"})
         assert client.post("/api/songs/prune?failed_only=false").json()["count"] == 2
         assert client.get("/api/songs").json() == []
+
+
+class TestStemServing:
+    """The drums-removed stem is what the play-along modes need. Demucs produces
+    it in the same pass as the drum stem, so it costs nothing extra."""
+
+    def test_serves_the_no_drums_stem(self, client):
+        slug = client.post("/api/songs", json={"title": "S"}).json()["slug"]
+
+        from dcdc import main as main_module
+        stems = main_module.store.dir(slug) / "stems"
+        stems.mkdir(parents=True, exist_ok=True)
+        (stems / "no_drums.wav").write_bytes(b"RIFF....WAVE")
+
+        res = client.get(f"/api/songs/{slug}/stem/no_drums")
+        assert res.status_code == 200
+        assert res.content == b"RIFF....WAVE"
+
+    def test_a_missing_stem_says_what_to_do(self, client):
+        slug = client.post("/api/songs", json={"title": "S"}).json()["slug"]
+        res = client.get(f"/api/songs/{slug}/stem/no_drums")
+        assert res.status_code == 404
+        assert "transcription" in res.json()["detail"]
+
+    def test_only_known_stems_are_served(self, client):
+        """The name lands in a filesystem path, so it is not free-form."""
+        slug = client.post("/api/songs", json={"title": "S"}).json()["slug"]
+        for name in ("../../etc/passwd", "source", "anything"):
+            assert client.get(f"/api/songs/{slug}/stem/{name}").status_code in (400, 404)
