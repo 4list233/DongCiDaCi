@@ -310,3 +310,33 @@ class TestReadiness:
 
     def test_no_config_describes_nothing(self, model_dir):
         assert drumsep.describe_stems() == ""
+
+
+class TestPythonTaggedConfig:
+    """The published configs carry PyTorch's `!!python/tuple` tag."""
+
+    def test_reads_a_config_with_python_tuples(self, tmp_path):
+        pytest.importorskip("yaml")
+        config = tmp_path / "c.yaml"
+        config.write_text(
+            "audio:\n"
+            "  window_shape: !!python/tuple [2048, 512]\n"
+            "training:\n"
+            "  instruments:\n    - kick\n    - snare\n    - toms\n"
+            "    - hi-hat\n    - ride\n    - crash\n",
+            encoding="utf-8",
+        )
+        assert drumsep.config_instruments(config) == [
+            "kick", "snare", "toms", "hi-hat", "ride", "crash"
+        ]
+
+    def test_still_refuses_to_construct_arbitrary_objects(self, tmp_path):
+        """Reading a downloaded file must not become code execution. The tuple
+        tag is allowed; everything else stays refused."""
+        pytest.importorskip("yaml")
+        config = tmp_path / "evil.yaml"
+        config.write_text(
+            "training:\n  instruments: !!python/object/apply:os.system ['echo pwned']\n",
+            encoding="utf-8",
+        )
+        assert drumsep.config_instruments(config) == []

@@ -121,6 +121,30 @@ CHECKPOINTS: list[dict] = [
 ]
 
 
+def _config_loader(yaml):
+    """A safe YAML loader that also understands `!!python/tuple`.
+
+    These configs were written by PyTorch training code and carry that tag for
+    things like STFT window shapes. `safe_load` refuses it, and the usual escape
+    hatch -- `unsafe_load` -- would execute arbitrary constructors out of a file
+    downloaded from the internet. Teaching the safe loader this one tag builds a
+    plain tuple and nothing else.
+    """
+    cached = getattr(_config_loader, "_loader", None)
+    if cached is not None:
+        return cached
+
+    class ConfigLoader(yaml.SafeLoader):
+        pass
+
+    ConfigLoader.add_constructor(
+        "tag:yaml.org,2002:python/tuple",
+        lambda loader, node: tuple(loader.construct_sequence(node, deep=True)),
+    )
+    _config_loader._loader = ConfigLoader
+    return ConfigLoader
+
+
 def config_instruments(config_path: Path) -> list[str]:
     """The stem names a config declares, in order. Empty if unreadable.
 
@@ -135,7 +159,7 @@ def config_instruments(config_path: Path) -> list[str]:
         return []
     try:
         with Path(config_path).open(encoding="utf-8") as handle:
-            config = yaml.safe_load(handle) or {}
+            config = yaml.load(handle, Loader=_config_loader(yaml)) or {}
     except Exception as exc:
         # A config we cannot parse is not fatal; stem matching falls back to
         # every name we know. Say so rather than degrading in silence.
