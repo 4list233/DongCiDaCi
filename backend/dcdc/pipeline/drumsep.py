@@ -236,16 +236,25 @@ def check() -> tuple[bool, list[str]]:
 
     missing = _missing_imports()
     if missing:
+        # Deliberately not MSST's requirements.txt: that is a training manifest
+        # which pulls a GUI toolkit and pinned librosa/demucs versions that
+        # downgrade a working install, and it fails to build on macOS anyway.
         problems.append(
             f"python packages missing: {', '.join(missing)} -- run: "
-            f"pip install -r {MSST_DIR / 'requirements.txt'}"
+            "pip install -e '.[stems]'"
         )
 
     return not problems, problems
 
 
-# What MSST's mdx23c inference path imports beyond what we already depend on.
-_MSST_IMPORTS = ("torch", "yaml", "omegaconf", "ml_collections", "einops", "tqdm")
+# What MSST's mdx23c inference path imports at module load. Verified against
+# inference.py and utils/settings.py rather than assumed: einops is deliberately
+# absent, since only the roformer models need it and reporting it as missing
+# would send you installing something the mdx23c path never touches.
+_MSST_IMPORTS = (
+    "torch", "librosa", "soundfile", "numpy", "tqdm",
+    "yaml", "omegaconf", "ml_collections",
+)
 
 
 def _missing_imports() -> list[str]:

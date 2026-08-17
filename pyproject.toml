@@ -27,6 +27,15 @@ audio = [
     "demucs>=4.0",
     "torch>=2.2",
 ]
+# Per-instrument kit separation. Just enough to run MSST's mdx23c inference
+# path -- deliberately NOT its requirements.txt, which is a training manifest
+# carrying a GUI toolkit, a metrics service, and pinned versions of librosa and
+# demucs that would downgrade a working install.
+stems = [
+    "omegaconf>=2.2",
+    "ml_collections>=0.1",
+    "einops>=0.6",
+]
 # ISMIR 2024 beat tracker. Big accuracy win over the librosa fallback.
 beat = [
     "beat-this @ git+https://github.com/CPJKU/beat_this.git",
