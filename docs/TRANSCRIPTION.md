@@ -34,7 +34,7 @@ artifact.
 | Complaint | Cause | Fix |
 |---|---|---|
 | No toms | 5-class model, toms are the weakest class | Toms get their own stem; split floor/mid/high by fundamental pitch |
-| No cymbal detection | ride and crash share one class | Cymbal stem, then split by spacing and ring-out |
+| No cymbal detection | ADTOF emits its whole cymbal class as GM note 49, literally "crash", so every ride pattern was written as a stream of crashes | The v0.1 separator gives ride and crash their own stems. Without it, spacing and accent now resolve them, so this improves even on the ADTOF path |
 | Ghost notes bad | velocity guessed from band energy of a mixed track | Peak loudness in a 50 ms window on the **snare stem alone**, normalised to that stem's own dynamic range |
 | Chart displaced by a beat | downbeat phase, not transcription | Cached analysis + an offset control; re-quantizing is instant |
 
@@ -47,19 +47,27 @@ other snare hits, not relative to a kick drum.
 
 **DrumSep** (MDX23C / TFC-TDF-Net-v3), by jarredou and aufr33, run through
 [ZFTurbo's Music-Source-Separation-Training](https://github.com/ZFTurbo/Music-Source-Separation-Training).
-Splits a drum track into **kick, snare, toms, hi-hat, cymbals**. Checkpoints are
-published on the [jarredou/models](https://github.com/jarredou/models/releases)
-releases page; the model is not described in the literature but is what the
-paper above uses.
+Two checkpoints are published, and the difference matters:
+
+| | Stems | Notes |
+|---|---|---|
+| **v0.1** (default) | kick, snare, toms, hi-hat, **ride, crash** | SDR 10.8. Separates the cymbals itself. |
+| 5-stem | kick, snare, toms, hi-hat, cymbals | Ride vs crash must be guessed downstream. |
+
+Take v0.1. A model trained to tell ride from crash beats inferring it from
+spacing and accent, and the six-stem output means that heuristic never runs.
 
 ```sh
 git clone https://github.com/ZFTurbo/Music-Source-Separation-Training \
   ~/.cache/dcdc/msst
-mkdir -p ~/.cache/dcdc/models
-# place the DrumSep MDX23C .ckpt and its .yaml config in ~/.cache/dcdc/models
+dcdc install-drumsep          # --model 1 for the 5-stem version
 ```
 
-`dcdc doctor` reports whether it found both.
+`dcdc doctor` reports whether it found both the code and a checkpoint.
+
+Canonical URLs live in ZFTurbo's
+[pretrained_models.md](https://github.com/ZFTurbo/Music-Source-Separation-Training/blob/main/docs/pretrained_models.md);
+if a release moves, that is the file to check.
 
 ## Why not the newest models
 
