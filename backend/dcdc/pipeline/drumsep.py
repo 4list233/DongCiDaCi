@@ -41,10 +41,17 @@ STEM_TO_LANE: dict[str, str] = {
     "toms": "mt",        # refined to lt/mt/ht by pitch, see onsets.py
     "hh": "hh",
     "hihat": "hh",
-    "cymbals": "rd",     # refined to rd/cc, see onsets.py
-    "ride": "rd",
+    "hi-hat": "hh",      # the v0.1 model spells it this way
+    "cymbals": "rd",     # undifferentiated: refined to rd/cc, see onsets.py
+    "ride": "rd",        # already separated by the 6-stem model
     "crash": "cc",
 }
+
+# The 6-stem model separates ride from crash itself, at SDR 10.8. The 5-stem one
+# emits a single "cymbals" stem. Guessing ride-vs-crash from timing is a decent
+# fallback but it is strictly worse than a model that was trained to tell them
+# apart, so it must not run on top of a real ride stem.
+UNDIFFERENTIATED_CYMBALS = "cymbals"
 
 # Where the checkpoint and config live once installed.
 MODEL_DIR = Path(os.environ.get("DCDC_MODEL_DIR", Path.home() / ".cache" / "dcdc" / "models"))
@@ -69,27 +76,105 @@ class DrumStems:
                 out[lane] = path
         return out
 
+    @property
+    def cymbals_need_splitting(self) -> bool:
+        """True when the model gave one cymbal stem rather than ride and crash."""
+        return UNDIFFERENTIATED_CYMBALS in {n.lower() for n in self.stems}
+
+
+# Published checkpoints, best first, as listed in ZFTurbo's model registry:
+# https://github.com/ZFTurbo/Music-Source-Separation-Training/blob/main/docs/pretrained_models.md
+#
+# The v0.1 model is the one worth having: it separates ride from crash itself
+# rather than emitting one lumped cymbal stem.
+_RELEASES = "https://github.com/jarredou/models/releases/download"
+CHECKPOINTS: list[dict] = [
+    {
+        "name": "aufr33-jarredou v0.1 (6 stems, SDR 10.8)",
+        "stems": "kick, snare, toms, hi-hat, ride, crash",
+        "ckpt": f"{_RELEASES}/aufr33-jarredou_MDX23C_DrumSep_model_v0.1"
+                "/aufr33-jarredou_DrumSep_model_mdx23c_ep_141_sdr_10.8059.ckpt",
+        "config": f"{_RELEASES}/aufr33-jarredou_MDX23C_DrumSep_model_v0.1"
+                  "/aufr33-jarredou_DrumSep_model_mdx23c_ep_141_sdr_10.8059.yaml",
+    },
+    {
+        "name": "jarredou 5-stem",
+        "stems": "kick, snare, toms, hi-hat, cymbals",
+        "ckpt": f"{_RELEASES}/DrumSep/drumsep_5stems_mdx23c_jarredou.ckpt",
+        "config": f"{_RELEASES}/DrumSep/config_mdx23c.yaml",
+    },
+]
+
+
+def download(index: int = 0) -> bool:
+    """Fetch a checkpoint and its config into MODEL_DIR. True on success."""
+    import urllib.error
+    import urllib.request
+
+    choice = CHECKPOINTS[index]
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"downloading {choice['name']}  -> {choice['stems']}")
+
+    for kind in ("config", "ckpt"):
+        url = choice[kind]
+        dest = MODEL_DIR / url.rsplit("/", 1)[-1]
+        if dest.exists() and dest.stat().st_size > 0:
+            print(f"  have {dest.name}")
+            continue
+
+        # Download beside the target and rename, so an interrupted download
+        # cannot leave a truncated file that later looks installed.
+        partial = dest.with_suffix(dest.suffix + ".part")
+        try:
+            print(f"  fetching {dest.name} ...", flush=True)
+            with urllib.request.urlopen(url) as response, partial.open("wb") as out:
+                shutil.copyfileobj(response, out)
+        except urllib.error.HTTPError as exc:
+            partial.unlink(missing_ok=True)
+            print(f"  failed: HTTP {exc.code} for {url}")
+            print("  the release may have moved; check ZFTurbo's pretrained_models.md")
+            return False
+        except OSError as exc:
+            partial.unlink(missing_ok=True)
+            print(f"  failed: {exc}")
+            return False
+        partial.rename(dest)
+        print(f"  saved {dest.name} ({dest.stat().st_size / 1e6:.0f} MB)")
+
+    return is_available()
+
 
 def is_available() -> bool:
     """True when both the inference code and a checkpoint are present."""
     return (MSST_DIR / "inference.py").exists() and bool(_find_checkpoint())
 
 
-def _find_checkpoint() -> Path | None:
+def _find(suffixes: tuple[str, ...]) -> Path | None:
+    """Newest matching file in MODEL_DIR, preferring names mentioning drumsep.
+
+    Matching is case-insensitive because the published checkpoint is spelled
+    `...DrumSep_model...`, and a case-sensitive glob silently finds nothing --
+    which looks exactly like the model not being installed.
+    """
     if not MODEL_DIR.exists():
         return None
-    for pattern in ("*drumsep*.ckpt", "*drumsep*.chpt", "*drumsep*.th", "*.ckpt"):
-        found = sorted(MODEL_DIR.glob(pattern))
-        if found:
-            return found[0]
-    return None
+    candidates = [
+        p for p in MODEL_DIR.iterdir()
+        if p.is_file() and p.suffix.lower() in suffixes and p.stat().st_size > 0
+    ]
+    if not candidates:
+        return None
+    # Prefer an explicitly-named drumsep file over any other model dropped here.
+    named = [p for p in candidates if "drumsep" in p.name.lower()]
+    return sorted(named or candidates)[-1]
+
+
+def _find_checkpoint() -> Path | None:
+    return _find((".ckpt", ".chpt", ".th"))
 
 
 def _find_config() -> Path | None:
-    if not MODEL_DIR.exists():
-        return None
-    found = sorted(MODEL_DIR.glob("*drumsep*.yaml")) or sorted(MODEL_DIR.glob("*.yaml"))
-    return found[0] if found else None
+    return _find((".yaml", ".yml"))
 
 
 def separate(drums_path: Path, out_dir: Path, device: str | None = None) -> DrumStems:
@@ -168,11 +253,15 @@ def _pick_device() -> str:
 
 
 def install_hint() -> str:
-    return (
+    lines = [
         "DrumSep is not installed. It splits the kit into per-instrument stems, "
-        "which is what gives you toms, ride-vs-crash, and real velocities.\n"
-        f"  git clone https://github.com/ZFTurbo/Music-Source-Separation-Training {MSST_DIR}\n"
-        f"  mkdir -p {MODEL_DIR}\n"
-        "  # then place the DrumSep MDX23C checkpoint (.ckpt) and its config (.yaml)\n"
-        f"  # from github.com/jarredou/models releases into {MODEL_DIR}"
-    )
+        "which is what gives you toms, ride vs crash, and real velocities.",
+    ]
+    if not (MSST_DIR / "inference.py").exists():
+        lines.append(
+            "  git clone https://github.com/ZFTurbo/Music-Source-Separation-Training "
+            f"{MSST_DIR}"
+        )
+    if not _find_checkpoint() or not _find_config():
+        lines.append("  dcdc install-drumsep")
+    return "\n".join(lines)

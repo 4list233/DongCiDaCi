@@ -109,9 +109,18 @@ def _adtof(drums_path: Path) -> Transcription:
             transcribe_to_midi(str(drums_path), str(midi_path))
         onsets, unmapped = _onsets_from_midi(midi_path)
 
+    # ADTOF resolves one cymbal class and emits it as GM 49, which is literally
+    # "crash". Taken at face value that writes every ride pattern as a stream of
+    # crashes, which is why the model looks like it is missing cymbals when it
+    # actually found them. Ride and crash differ in how they are spaced and how
+    # hard they are hit, and that is visible in the onsets alone, so the same
+    # heuristic used on a separated cymbal stem applies here.
+    onsets = _resolve_cymbals(onsets)
+
     warnings = [
-        "ADTOF resolves 5 classes: toms default to mid tom, cymbals to ride",
-        "open vs closed hi-hat and ride vs crash still need your ear",
+        "ADTOF resolves 5 classes: every tom lands on the mid tom",
+        "ride vs crash is inferred from spacing and accent, so check the fills",
+        "open vs closed hi-hat still needs your ear",
     ]
     if unmapped:
         warnings.append(
@@ -119,6 +128,21 @@ def _adtof(drums_path: Path) -> Transcription:
         )
 
     return Transcription(onsets=onsets, backend="adtof", warnings=warnings)
+
+
+def _resolve_cymbals(onsets: list[Onset]) -> list[Onset]:
+    """Split an undifferentiated cymbal class into ride and crash.
+
+    Operates on the cymbal onsets only, leaving every other lane alone, and
+    falls back to leaving them as-is when there are too few hits to judge.
+    """
+    from .onsets import split_cymbals
+
+    cymbals = [o for o in onsets if o.lane in ("rd", "cc")]
+    if len(cymbals) < 3:
+        return onsets
+    split_cymbals(cymbals)            # decided from timing and accent alone
+    return onsets
 
 
 def _onsets_from_midi(midi_path: Path) -> tuple[list[Onset], set[int]]:

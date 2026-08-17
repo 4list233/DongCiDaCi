@@ -104,8 +104,6 @@ def split_toms(y: np.ndarray, sr: int, onsets: list[Onset]) -> list[Onset]:
     they are pitched: a floor tom sits around 80-110Hz and a rack tom well above
     that. Fills descend, so getting this wrong puts every fill upside down.
     """
-    import librosa
-
     if not onsets:
         return []
 
@@ -138,12 +136,13 @@ def split_toms(y: np.ndarray, sr: int, onsets: list[Onset]) -> list[Onset]:
     return onsets
 
 
-def split_cymbals(y: np.ndarray, sr: int, onsets: list[Onset]) -> list[Onset]:
-    """Separate ride pattern from crash accents within one cymbal stem.
+def split_cymbals(onsets: list[Onset]) -> list[Onset]:
+    """Separate ride pattern from crash accents.
 
     A ride is played repeatedly and evenly; a crash is loud, isolated, and rings
-    much longer. Neither is recoverable from a mixed drum track, which is why
-    5-class models collapse them into one voice.
+    much longer. That distinction lives in the timing and the accents rather than
+    in the audio, so this works on a separated cymbal stem and equally well on
+    the single undifferentiated cymbal class a 5-class model emits.
     """
     if len(onsets) < 3:
         for onset in onsets:
@@ -163,8 +162,15 @@ def split_cymbals(y: np.ndarray, sr: int, onsets: list[Onset]) -> list[Onset]:
     return onsets
 
 
-def transcribe_stems(lane_stems: dict, sr_target: int = 44100) -> tuple[list[Onset], list[str]]:
-    """Run detection across every stem and return one merged, sorted list."""
+def transcribe_stems(
+    lane_stems: dict, sr_target: int = 44100, split_cymbal_stem: bool = False
+) -> tuple[list[Onset], list[str]]:
+    """Run detection across every stem and return one merged, sorted list.
+
+    `split_cymbal_stem` guesses ride from crash by timing, and is only correct
+    when the separator emitted a single undifferentiated cymbal stem. Running it
+    on a model that already separated them would demote real ride hits.
+    """
     import librosa
 
     onsets: list[Onset] = []
@@ -184,8 +190,8 @@ def transcribe_stems(lane_stems: dict, sr_target: int = 44100) -> tuple[list[Ons
 
         if lane == "mt":
             found = split_toms(y, sr, found)
-        elif lane == "rd":
-            found = split_cymbals(y, sr, found)
+        elif lane == "rd" and split_cymbal_stem:
+            found = split_cymbals(found)
 
         if not found:
             warnings.append(f"no hits found in the {lane} stem")

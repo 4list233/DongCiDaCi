@@ -44,13 +44,17 @@ def run(audio_path, work_dir, title, artist="", adt_backend="auto",
 
     step("transcribing", 0.70)
     if stems and adt_backend in ("auto", "stems"):
-        found, stem_warnings = onsets.transcribe_stems(stems.lane_stems())
+        found, stem_warnings = onsets.transcribe_stems(
+            stems.lane_stems(), split_cymbal_stem=stems.cymbals_need_splitting
+        )
+        notes = [f"per-stem transcription via {stems.model}"]
+        if stems.cymbals_need_splitting:
+            notes.append(
+                "this model emits one cymbal stem, so ride vs crash is inferred "
+                "from spacing and accent -- check the fills"
+            )
         transcription = transcribe.Transcription(
-            onsets=found,
-            backend="stems",
-            warnings=stem_warnings + [
-                f"per-stem transcription via {stems.model}",
-            ],
+            onsets=found, backend="stems", warnings=stem_warnings + notes,
         )
     else:
         transcription = transcribe.transcribe(sep.drums, backend=adt_backend)

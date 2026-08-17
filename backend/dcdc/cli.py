@@ -38,6 +38,12 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("doctor", help="report which pipeline stages are installed")
 
+    p_ds = sub.add_parser("install-drumsep", help="download the DrumSep checkpoint")
+    p_ds.add_argument(
+        "--model", type=int, default=0,
+        help="0 = 6 stems with ride and crash separated (default), 1 = 5 stems",
+    )
+
     args = parser.parse_args(argv)
 
     if args.command == "transcribe":
@@ -48,6 +54,8 @@ def main(argv: list[str] | None = None) -> int:
         return _serve(args)
     if args.command == "doctor":
         return _doctor()
+    if args.command == "install-drumsep":
+        return _install_drumsep(args.model)
     return 1
 
 
@@ -112,6 +120,27 @@ def _show(args) -> int:
 def _serve(args) -> int:
     import uvicorn
     uvicorn.run("dcdc.main:app", host=args.host, port=args.port, reload=False)
+    return 0
+
+
+def _install_drumsep(model: int) -> int:
+    from .pipeline import drumsep
+
+    if model not in range(len(drumsep.CHECKPOINTS)):
+        print(f"no such model {model}; choices are:")
+        for i, choice in enumerate(drumsep.CHECKPOINTS):
+            print(f"  {i}  {choice['name']}  -> {choice['stems']}")
+        return 2
+
+    if not (drumsep.MSST_DIR / "inference.py").exists():
+        print("the inference code is missing; clone it first:")
+        print("  git clone https://github.com/ZFTurbo/Music-Source-Separation-Training "
+              f"{drumsep.MSST_DIR}")
+        return 1
+
+    if not drumsep.download(model):
+        return 1
+    print("\ndrumsep installed. re-transcribe a song to use it.")
     return 0
 
 
