@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node test/alphatex.test.mjs"
+    "test": "node test/alphatex.test.mjs && node test/record.test.mjs"
   },
   "dependencies": {
     "@coderline/alphatab": "^1.8.4"

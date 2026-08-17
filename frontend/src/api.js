@@ -37,6 +37,14 @@ export const api = {
   },
   audioUrl: (slug) => `${BASE}/api/songs/${slug}/audio`,
 
+  // `no_drums` is the play-along track: the song with the drums taken out,
+  // which Demucs produces in the same pass as the drum stem.
+  stemUrl: (slug, name) => `${BASE}/api/songs/${slug}/stem/${name}`,
+
+  // Re-align an existing chart without re-running any model. `offset_beats`
+  // rotates the downbeat, which is the fix for a chart displaced by a beat.
+  requantize: (slug, body) => request(`/api/songs/${slug}/requantize`, json(body)),
+
   transcribe: (slug, options = {}) => request(`/api/songs/${slug}/transcribe`, json(options)),
 
   createFromUrl: (body) => request('/api/songs/from-url', json(body)),
