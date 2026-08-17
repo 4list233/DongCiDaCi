@@ -8,6 +8,8 @@ without a web server in the way.
 from __future__ import annotations
 
 import argparse
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -37,6 +39,8 @@ def main(argv: list[str] | None = None) -> int:
     p_serve = sub.add_parser("serve", help="run the web app")
     p_serve.add_argument("--host", default="127.0.0.1")
     p_serve.add_argument("--port", type=int, default=8000)
+    p_serve.add_argument("--no-build", action="store_true",
+                         help="serve the existing build even if it is out of date")
 
     sub.add_parser("ls", help="list stored songs")
 
@@ -133,8 +137,55 @@ def _show(args) -> int:
 
 def _serve(args) -> int:
     import uvicorn
+
+    if not args.no_build:
+        _ensure_frontend_built()
+
     uvicorn.run("dcdc.main:app", host=args.host, port=args.port, reload=False)
     return 0
+
+
+def _ensure_frontend_built() -> None:
+    """Rebuild the frontend when the sources are newer than the build.
+
+    The server serves frontend/dist, which is gitignored -- so `git pull` brings
+    new interface code and `dcdc serve` keeps serving the build from whenever
+    npm was last run. The result is pulling a change and seeing nothing happen,
+    which is indistinguishable from the change not working.
+    """
+    root = Path(__file__).resolve().parents[2] / "frontend"
+    dist = root / "dist"
+    if not root.exists():
+        return
+
+    newest_source = 0.0
+    for pattern in ("src/**/*", "index.html", "package.json", "vite.config.*"):
+        for path in root.glob(pattern):
+            if path.is_file():
+                newest_source = max(newest_source, path.stat().st_mtime)
+
+    built = dist / "index.html"
+    if built.exists() and built.stat().st_mtime >= newest_source:
+        return
+
+    reason = "no build found" if not built.exists() else "the interface has changed"
+    npm = shutil.which("npm")
+    if not npm:
+        print(f"{reason}, and npm is not installed -- the page you get will be "
+              f"whatever was last built.\n  build it elsewhere, or pass --no-build "
+              f"to silence this.", file=sys.stderr)
+        return
+
+    print(f"{reason}; rebuilding the interface...", file=sys.stderr)
+    result = subprocess.run([npm, "run", "build"], cwd=root,
+                            capture_output=True, text=True)
+    if result.returncode != 0:
+        tail = (result.stderr or result.stdout).strip().splitlines()[-8:]
+        print("the rebuild failed, so the page will be the previous build:",
+              file=sys.stderr)
+        print("\n".join(f"  {line}" for line in tail), file=sys.stderr)
+        return
+    print("interface rebuilt.", file=sys.stderr)
 
 
 def _store():
