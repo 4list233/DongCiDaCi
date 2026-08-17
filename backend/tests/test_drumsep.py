@@ -270,7 +270,18 @@ class TestReadiness:
         _, problems = drumsep.check()
         joined = " ".join(problems)
         assert "definitely_not_installed" in joined
-        assert "requirements.txt" in joined
+        assert "[stems]" in joined
+
+    def test_never_recommends_msst_requirements(self, model_dir, monkeypatch):
+        """That file is a training manifest: it fails to build on macOS and
+        downgrades librosa and demucs on the way past."""
+        monkeypatch.setattr(drumsep, "_MSST_IMPORTS", ("definitely_not_installed",))
+        _, problems = drumsep.check()
+        assert "requirements.txt" not in " ".join(problems)
+
+    def test_einops_is_not_required(self):
+        """Only the roformer models import it; the mdx23c path never does."""
+        assert "einops" not in drumsep._MSST_IMPORTS
 
     def test_ready_when_everything_is_present(self, model_dir, monkeypatch):
         msst = model_dir / "msst"
