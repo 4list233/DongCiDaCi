@@ -57,10 +57,20 @@ def transcribe(drums_path: Path, backend: str = "auto") -> Transcription:
             if backend == "adtof":
                 raise
             log.info("adtof not installed, falling back to spectral")
+            reason = "ADTOF is not installed -- install it for a real transcription"
         except Exception as exc:
             if backend == "adtof":
                 raise
             log.warning("adtof failed (%s), falling back to spectral", exc)
+            # Naming the failure matters: "install ADTOF" is actively wrong when
+            # ADTOF is installed and something else broke, and it sends you
+            # reinstalling a package that was never the problem.
+            reason = f"ADTOF is installed but failed, so this is the fallback: {exc}"
+
+        result = _spectral(drums_path)
+        result.warnings.append(reason)
+        return result
+
     return _spectral(drums_path)
 
 
@@ -308,7 +318,6 @@ def _spectral(drums_path: Path) -> Transcription:
         warnings=[
             "spectral fallback: kick/snare/hi-hat only",
             "no toms, no cymbal distinction, ghost notes are unreliable",
-            "install ADTOF for a real transcription",
         ],
     )
 

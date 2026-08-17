@@ -97,6 +97,13 @@ def _beat_this(audio_path, beats_per_bar: int) -> Grid:
     if len(downbeats) < 2:
         warnings.append("beat_this found fewer than two downbeats; bar detection unreliable")
 
+    missed = dropped_beats(beats)
+    if missed:
+        warnings.append(
+            f"the beat tracker appears to have missed {missed} beat(s) -- bars after "
+            "each gap will be short, so check where the chart stops lining up"
+        )
+
     return Grid(
         beats=beats,
         downbeats=downbeats,
@@ -146,15 +153,49 @@ def _librosa(audio_path, beats_per_bar: int) -> Grid:
 
 
 def _tempo_and_confidence(beats: np.ndarray) -> tuple[float, float]:
-    """Median tempo, plus how regular the spacing is (1.0 = metronomic)."""
+    """Median tempo, plus how regular the spacing is (1.0 = metronomic).
+
+    Spread is measured with the median absolute deviation rather than the
+    standard deviation, because a beat tracker that misses a handful of beats
+    leaves a few double-length gaps, and squaring those makes the whole track
+    look irregular. A robust spread reports what the *typical* beat does, which
+    is what the quantizer actually relies on. Missed beats are a separate and
+    more useful thing to say, so they are reported separately.
+    """
     if len(beats) < 2:
         return 120.0, 0.0
     intervals = np.diff(beats)
     median = float(np.median(intervals))
     if median <= 0:
         return 120.0, 0.0
-    spread = float(np.std(intervals) / median)
-    return 60.0 / median, float(max(0.0, 1.0 - spread * 4))
+
+    deviation = float(np.median(np.abs(intervals - median)))
+    spread = deviation / median
+    # A human band sits near 0.02; 0.15 is genuinely ragged.
+    return 60.0 / median, float(max(0.0, min(1.0, 1.0 - spread / 0.15)))
+
+
+def dropped_beats(beats: np.ndarray) -> int:
+    """How many beats the tracker appears to have skipped.
+
+    A gap close to a whole multiple of the median is a missed beat, not a tempo
+    change. Saying so is far more actionable than "spacing is irregular",
+    because it points at the tracker rather than at the performance.
+    """
+    if len(beats) < 3:
+        return 0
+    intervals = np.diff(beats)
+    median = float(np.median(intervals))
+    if median <= 0:
+        return 0
+
+    missed = 0
+    for interval in intervals:
+        multiple = interval / median
+        nearest = round(multiple)
+        if nearest >= 2 and abs(multiple - nearest) < 0.2:
+            missed += nearest - 1
+    return int(missed)
 
 
 def _torch_device() -> str:
