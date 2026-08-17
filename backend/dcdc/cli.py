@@ -161,10 +161,14 @@ def _doctor() -> int:
     except ImportError:
         has_beat_this = False
 
+    # Having the files is not the same as being able to run them, so this
+    # reports runnability rather than mere presence.
+    drumsep_ready, drumsep_problems = drumsep.check()
+
     print(f"device            {separate.pick_device()}")
     print(f"yt-dlp            {mark(fetch.is_available())}   stage 0, audio from a link")
     print(f"demucs            {mark(separate.is_available())}   stage 1, drum isolation")
-    print(f"drumsep           {mark(drumsep.is_available())}   stage 1b, per-instrument stems")
+    print(f"drumsep           {mark(drumsep_ready)}   stage 1b, per-instrument stems")
     print(f"beat_this         {mark(has_beat_this)}   stage 2, preferred beat tracker")
     print(f"librosa           {mark(has_librosa)}   stage 2/3 fallback")
     print(f"adtof             {mark(transcribe.is_adtof_available())}   stage 3, real ADT model")
@@ -182,9 +186,17 @@ def _doctor() -> int:
     if not transcribe.is_adtof_available():
         print("\nrunning on the spectral fallback -- kick/snare/hi-hat only, no ghost notes:")
         print("  git clone https://github.com/xavriley/ADTOF-pytorch && pip install -e ADTOF-pytorch")
-    if not drumsep.is_available():
-        print()
-        print(drumsep.install_hint())
+    if drumsep_ready:
+        stems = drumsep.describe_stems()
+        if stems:
+            print(f"\ndrumsep stems: {stems}")
+    else:
+        problems = drumsep_problems
+        print("\ndrumsep splits the kit into per-instrument stems, which is what "
+              "gives you\ntoms, ride vs crash, and real velocities. To finish "
+              "setting it up:")
+        for problem in problems:
+            print(f"  - {problem}")
     return 0
 
 

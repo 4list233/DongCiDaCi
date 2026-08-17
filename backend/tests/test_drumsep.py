@@ -252,3 +252,50 @@ class _ctx:
 
     def __exit__(self, *exc):
         return False
+
+
+class TestReadiness:
+    """Having the files is not the same as being able to run them."""
+
+    def test_reports_each_missing_piece(self, model_dir, monkeypatch):
+        monkeypatch.setattr(drumsep, "MSST_DIR", model_dir / "no-msst")
+        ready, problems = drumsep.check()
+        assert not ready
+        joined = " ".join(problems)
+        assert "inference code missing" in joined
+        assert "install-drumsep" in joined
+
+    def test_unmet_python_deps_are_named(self, model_dir, monkeypatch):
+        monkeypatch.setattr(drumsep, "_MSST_IMPORTS", ("torch", "definitely_not_installed"))
+        _, problems = drumsep.check()
+        joined = " ".join(problems)
+        assert "definitely_not_installed" in joined
+        assert "requirements.txt" in joined
+
+    def test_ready_when_everything_is_present(self, model_dir, monkeypatch):
+        msst = model_dir / "msst"
+        msst.mkdir()
+        (msst / "inference.py").write_text("x")
+        monkeypatch.setattr(drumsep, "MSST_DIR", msst)
+        monkeypatch.setattr(drumsep, "_MSST_IMPORTS", ())
+        (model_dir / "drumsep.ckpt").write_bytes(b"x")
+        (model_dir / "config_drumsep.yaml").write_text("training:\n  instruments:\n    - kick\n")
+
+        ready, problems = drumsep.check()
+        assert ready and problems == []
+
+    def test_describe_stems_flags_unmapped_names(self, model_dir):
+        pytest.importorskip("yaml")
+        (model_dir / "config_drumsep.yaml").write_text(
+            "training:\n  instruments:\n    - kick\n    - gong\n", encoding="utf-8"
+        )
+        described = drumsep.describe_stems()
+        assert "kick" in described and "gong" in described
+        assert "unmapped" in described
+
+    def test_describe_stems_admits_when_it_cannot_read(self, model_dir):
+        (model_dir / "config_drumsep.yaml").write_text("\x00 [broken", encoding="utf-8")
+        assert "unknown" in drumsep.describe_stems()
+
+    def test_no_config_describes_nothing(self, model_dir):
+        assert drumsep.describe_stems() == ""

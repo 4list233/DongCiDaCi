@@ -131,13 +131,15 @@ def config_instruments(config_path: Path) -> list[str]:
     try:
         import yaml
     except ImportError:
+        log.warning("pyyaml is not installed, so stem names fall back to guesswork")
         return []
     try:
         with Path(config_path).open(encoding="utf-8") as handle:
             config = yaml.safe_load(handle) or {}
-    except Exception:
+    except Exception as exc:
         # A config we cannot parse is not fatal; stem matching falls back to
-        # every name we know.
+        # every name we know. Say so rather than degrading in silence.
+        log.warning("could not parse %s: %s", config_path, exc)
         return []
 
     training = config.get("training") or {}
@@ -209,6 +211,63 @@ def download(index: int = 0) -> bool:
 def is_available() -> bool:
     """True when both the inference code and a checkpoint are present."""
     return (MSST_DIR / "inference.py").exists() and bool(_find_checkpoint())
+
+
+def check() -> tuple[bool, list[str]]:
+    """Report whether separation can actually run, and what is missing.
+
+    Having the files is not the same as being able to run them: the inference
+    script has its own dependency list, and if it is unmet the run fails at
+    import time. That failure is caught and the pipeline degrades to whole-kit
+    transcription, which produces a chart with no toms -- indistinguishable from
+    a bad model unless the real reason is surfaced here.
+    """
+    problems: list[str] = []
+
+    if not (MSST_DIR / "inference.py").exists():
+        problems.append(
+            "inference code missing -- git clone "
+            f"https://github.com/ZFTurbo/Music-Source-Separation-Training {MSST_DIR}"
+        )
+    if not _find_checkpoint():
+        problems.append("no checkpoint -- run: dcdc install-drumsep")
+    if not _find_config():
+        problems.append("no model config -- run: dcdc install-drumsep")
+
+    missing = _missing_imports()
+    if missing:
+        problems.append(
+            f"python packages missing: {', '.join(missing)} -- run: "
+            f"pip install -r {MSST_DIR / 'requirements.txt'}"
+        )
+
+    return not problems, problems
+
+
+# What MSST's mdx23c inference path imports beyond what we already depend on.
+_MSST_IMPORTS = ("torch", "yaml", "omegaconf", "ml_collections", "einops", "tqdm")
+
+
+def _missing_imports() -> list[str]:
+    import importlib.util
+
+    return [name for name in _MSST_IMPORTS if importlib.util.find_spec(name) is None]
+
+
+def describe_stems() -> str:
+    """The stems the installed checkpoint declares, for `dcdc doctor`."""
+    config = _find_config()
+    if not config:
+        return ""
+    instruments = config_instruments(config)
+    if not instruments:
+        return "unknown (could not read the config)"
+    lanes = [i for i in instruments if i.lower() in STEM_TO_LANE]
+    text = ", ".join(instruments)
+    if len(lanes) < len(instruments):
+        unmapped = [i for i in instruments if i.lower() not in STEM_TO_LANE]
+        text += f"  (unmapped, will be ignored: {', '.join(unmapped)})"
+    return text
 
 
 def _find(suffixes: tuple[str, ...]) -> Path | None:

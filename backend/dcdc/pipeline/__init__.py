@@ -58,11 +58,21 @@ def run(audio_path, work_dir, title, artist="", adt_backend="auto",
         )
     else:
         transcription = transcribe.transcribe(sep.drums, backend=adt_backend)
-        if adt_backend == "auto" and not drumsep.is_available():
-            transcription.warnings.append(
-                "DrumSep not installed -- no per-instrument stems, so toms and "
-                "cymbals are approximated and velocities are estimates"
-            )
+        if adt_backend == "auto":
+            # Say which of the two very different situations this is. A chart
+            # with no toms because separation was never installed and one
+            # because separation was installed and failed look identical, and
+            # they need opposite fixes.
+            if drumsep.is_available():
+                transcription.warnings.append(
+                    "DrumSep is installed but produced no stems, so this fell back "
+                    "to whole-kit transcription -- run `dcdc doctor` for the reason"
+                )
+            else:
+                transcription.warnings.append(
+                    "DrumSep not installed -- no per-instrument stems, so toms and "
+                    "cymbals are approximated and velocities are estimates"
+                )
 
     step("quantizing", 0.90)
     chart, report = quantize.quantize(
