@@ -108,6 +108,25 @@ input::placeholder { color: var(--ink-3); }
 .hint { margin: 0; font-size: 0.72rem; line-height: 1.5; color: var(--ink-3); }
 .hint a { color: var(--accent); }
 
+.alt { font-size: 0.78rem; color: var(--ink-3); }
+.alt summary { cursor: pointer; padding: 0.2rem 0; }
+.alt summary:hover { color: var(--accent); }
+.altbody { display: flex; flex-direction: column; gap: 0.45rem; padding-top: 0.5rem; }
+
+.fetchrow { display: flex; gap: 0.4rem; max-width: 34rem; }
+.fetchrow input { flex: 1; }
+
+.fineprint {
+  margin: 0;
+  max-width: 62ch;
+  font-size: 0.75rem;
+  line-height: 1.55;
+  color: var(--ink-3);
+  border-left: 2px solid var(--rule);
+  padding-left: 0.7rem;
+}
+.fineprint strong { color: var(--ink-2); }
+
 .needaudio {
   padding: 1.25rem 1rem 1.5rem;
   border-bottom: 1px solid var(--rule);

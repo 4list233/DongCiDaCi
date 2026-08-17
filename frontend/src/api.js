@@ -39,6 +39,9 @@ export const api = {
 
   transcribe: (slug, options = {}) => request(`/api/songs/${slug}/transcribe`, json(options)),
 
+  createFromUrl: (body) => request('/api/songs/from-url', json(body)),
+  fetchAudio: (slug, body) => request(`/api/songs/${slug}/fetch`, json(body)),
+
   getChart: (slug) => request(`/api/songs/${slug}/chart`),
   getRawChart: (slug) => request(`/api/songs/${slug}/raw`),
   putChart: (slug, chart) => request(`/api/songs/${slug}/chart`, {

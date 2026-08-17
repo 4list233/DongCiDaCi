@@ -27,6 +27,11 @@ audio = [
 beat = [
     "beat-this @ git+https://github.com/CPJKU/beat_this.git",
 ]
+# Pulling audio from a link. Keep it current -- yt-dlp breaks whenever a site
+# changes, and the fix is almost always an upgrade.
+fetch = [
+    "yt-dlp>=2024.1.1",
+]
 dev = [
     "pytest>=8.0",
     "httpx>=0.27",

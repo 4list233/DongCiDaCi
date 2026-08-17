@@ -116,7 +116,7 @@ def _serve(args) -> int:
 
 
 def _doctor() -> int:
-    from .pipeline import separate, transcribe
+    from .pipeline import fetch, separate, transcribe
 
     def mark(ok: bool) -> str:
         return "ok     " if ok else "MISSING"
@@ -133,6 +133,7 @@ def _doctor() -> int:
         has_beat_this = False
 
     print(f"device            {separate.pick_device()}")
+    print(f"yt-dlp            {mark(fetch.is_available())}   stage 0, audio from a link")
     print(f"demucs            {mark(separate.is_available())}   stage 1, drum isolation")
     print(f"beat_this         {mark(has_beat_this)}   stage 2, preferred beat tracker")
     print(f"librosa           {mark(has_librosa)}   stage 2/3 fallback")
@@ -142,6 +143,9 @@ def _doctor() -> int:
         print("\ninstall the pipeline:  pip install -e '.[audio]'")
         return 0
 
+    if not fetch.is_available():
+        print("\nno yt-dlp -- links are disabled, audio must be uploaded as a file:")
+        print("  pip install -e '.[fetch]'")
     if not has_beat_this:
         print("\nno beat tracker -- downbeats are inferred, so bar 1 may be wrong:")
         print("  pip install 'git+https://github.com/CPJKU/beat_this.git'")

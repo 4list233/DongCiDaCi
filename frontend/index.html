@@ -11,18 +11,25 @@
     <p id="capabilities" class="capabilities"></p>
 
     <form id="newsong" class="newsong">
-      <input name="title" placeholder="Song title" required>
-      <input name="artist" placeholder="Artist">
-      <label class="filepick" id="filepick">
-        <span id="filename">Choose audio file</span>
-        <input type="file" name="audio" accept="audio/*" required>
-      </label>
-      <input name="source_url" placeholder="Reference link (optional)">
-      <button type="submit">Add song</button>
-      <p class="hint">
-        The audio file is required. A streaming link can’t supply it —
-        <a href="#" id="whynot">why not</a>.
-      </p>
+      <input name="url" id="urlinput" placeholder="Paste a YouTube link" autocomplete="off">
+      <button type="submit" id="addbtn">Fetch and transcribe</button>
+
+      <details class="alt">
+        <summary>or use a file / set the title</summary>
+        <div class="altbody">
+          <input name="title" placeholder="Song title">
+          <input name="artist" placeholder="Artist">
+          <label class="filepick" id="filepick">
+            <span id="filename">Choose audio file</span>
+            <input type="file" name="audio" accept="audio/*">
+          </label>
+          <p class="hint">
+            Title and artist are filled in from the link when left blank.
+            Spotify and Apple Music links can’t work —
+            <a href="#" id="whynot">why not</a>.
+          </p>
+        </div>
+      </details>
     </form>
 
     <nav id="library" class="library"></nav>
@@ -62,16 +69,24 @@
     <section id="needaudio" class="needaudio" hidden>
       <h3>This song has no audio yet</h3>
       <p>
-        The pipeline needs the actual waveform. Spotify can’t provide it: the
-        Audio Analysis endpoints were closed to new apps in November 2024, and
-        the Web Playback SDK is DRM’d specifically so applications can’t reach
-        the samples. Paste a link to remember <em>which</em> song this is —
-        supply the file yourself.
+        The pipeline needs the actual waveform. Paste a YouTube link and it will
+        be fetched, or choose a file you already have.
       </p>
+      <div class="fetchrow">
+        <input id="fetchurl" placeholder="YouTube link" autocomplete="off">
+        <button id="fetchbtn">Fetch</button>
+      </div>
       <label class="filepick large">
-        <span id="addaudioname">Choose audio file</span>
+        <span id="addaudioname">…or choose an audio file</span>
         <input type="file" id="addaudio" accept="audio/*">
       </label>
+      <p class="fineprint">
+        <strong>Spotify and Apple Music cannot work.</strong> Spotify closed its
+        Audio Analysis API to new apps in November 2024, and its Web Playback SDK
+        streams through DRM specifically so applications can’t reach the decoded
+        samples. No API key changes this. Fetching from YouTube is against its
+        terms of service.
+      </p>
     </section>
 
     <section class="notation-wrap">

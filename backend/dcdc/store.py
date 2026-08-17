@@ -145,6 +145,18 @@ class Store:
         self.update(slug, audio_file=name)
         return name
 
+    def attach_audio(self, slug: str, path: Path) -> str:
+        """Register an audio file already sitting in the song directory.
+
+        Used by the fetch stage, which writes straight into the song folder
+        rather than handing bytes back through the API process.
+        """
+        path = Path(path)
+        if path.parent.resolve() != self.dir(slug).resolve():
+            raise ValueError(f"{path} is not inside the song directory for {slug!r}")
+        self.update(slug, audio_file=path.name)
+        return path.name
+
     def _unique_slug(self, base: str) -> str:
         slug, n = base, 2
         while self.dir(slug).exists():

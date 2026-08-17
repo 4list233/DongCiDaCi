@@ -128,6 +128,57 @@ console.log('\ndynamics and rudiments');
         `isGhost=${beats[2].notes[0].isGhost}`);
 }
 
+// --- note lengths -------------------------------------------------------------
+
+console.log('\nnote lengths');
+{
+  // A plain eighth-note hi-hat on a 16-slot grid must come out as eight eighth
+  // notes, not eight note/rest pairs. This is the single biggest readability
+  // difference between a usable chart and an unusable one.
+  const { score } = parse(chartWith({ hh: 'x-x-x-x-x-x-x-x-' }));
+  const beats = score.tracks[0].staves[0].bars[0].voices[0].beats;
+
+  check('eighths do not become note+rest pairs', beats.length === 8, `got ${beats.length} beats`);
+  check('every beat sounds', beats.every((b) => b.notes.length === 1));
+  check('written as eighth notes', beats.every((b) => b.duration === 8),
+        `durations: ${beats.map((b) => b.duration).join(',')}`);
+}
+{
+  // Notes hold until the next event in any lane, so a 16th-note kick shortens
+  // only the beat it interrupts.
+  const { score } = parse(chartWith({ hh: 'x-x-x-x-x-x-x-x-', bd: 'o--o----o-------' }));
+  const beats = score.tracks[0].staves[0].bars[0].voices[0].beats;
+  const durations = beats.map((b) => b.duration).join(',');
+
+  check('gap to next event sets the value', durations === '8,16,16,8,8,8,8,8,8',
+        `got ${durations}`);
+  check('all nine events sound', beats.every((b) => b.notes.length >= 1));
+}
+{
+  const { score } = parse(chartWith({ bd: 'o-------o-------' }));
+  const beats = score.tracks[0].staves[0].bars[0].voices[0].beats;
+  check('a half-bar gap is a half note', beats.length === 2 && beats.every((b) => b.duration === 2),
+        `got ${beats.map((b) => b.duration).join(',')}`);
+}
+{
+  const { score } = parse(chartWith({ sd: 'o-----o---------' }));
+  const beats = score.tracks[0].staves[0].bars[0].voices[0].beats;
+  check('a 6-slot gap is a dotted quarter', beats[0].duration === 4 && beats[0].dots === 1,
+        `duration=${beats[0].duration} dots=${beats[0].dots}`);
+}
+{
+  const { score } = parse(chartWith({ sd: '----o-----------' }));
+  const beats = score.tracks[0].staves[0].bars[0].voices[0].beats;
+  check('a leading gap becomes a rest', beats[0].notes.length === 0,
+        'first beat should be a rest');
+  check('then the hit', beats.some((b) => b.notes.length === 1));
+}
+{
+  const { score } = parse(chartWith({}));
+  const beats = score.tracks[0].staves[0].bars[0].voices[0].beats;
+  check('an empty bar is rests only', beats.every((b) => b.notes.length === 0));
+}
+
 // --- resolutions --------------------------------------------------------------
 
 console.log('\nresolutions');

@@ -22,7 +22,7 @@ from pydantic import BaseModel
 from .chart import Chart, ChartError, LANES, ARTICULATIONS
 from .jobs import JobRunner
 from .store import Store
-from .pipeline import separate, transcribe
+from .pipeline import fetch, separate, transcribe
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger(__name__)
@@ -65,6 +65,13 @@ class TranscribeOptions(BaseModel):
     res: int | None = None
 
 
+class FetchRequest(BaseModel):
+    url: str
+    title: str = ""
+    artist: str = ""
+    transcribe: bool = True
+
+
 # --- meta -------------------------------------------------------------------
 
 @app.get("/api/health")
@@ -79,6 +86,7 @@ def health():
         "songs_dir": str(SONGS_DIR),
         "demucs": separate.is_available(),
         "adtof": transcribe.is_adtof_available(),
+        "ytdlp": fetch.is_available(),
         "device": separate.pick_device(),
     }
 
@@ -144,6 +152,54 @@ async def upload_audio(slug: str, file: UploadFile = File(...)):
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     return {"audio_file": name}
+
+
+@app.post("/api/songs/from-url", status_code=202)
+def create_song_from_url(body: FetchRequest):
+    """Create a song from a link, download its audio, and transcribe it.
+
+    Validates the URL synchronously so an unusable link (Spotify, Apple Music)
+    fails immediately with an explanation, rather than becoming a background job
+    that fails a second later where nobody is looking.
+    """
+    try:
+        fetch.check_url(body.url)
+    except fetch.FetchError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    if not fetch.is_available():
+        raise HTTPException(
+            501,
+            "yt-dlp is not installed on this machine. Run: pip install -e '.[fetch]'",
+        )
+
+    song = store.create(
+        body.title.strip() or "Untitled",
+        body.artist.strip(),
+        body.url.strip(),
+    )
+    runner.submit_fetch(song.slug, body.url.strip(), then_transcribe=body.transcribe)
+    return {"slug": song.slug, "status": "queued"}
+
+
+@app.post("/api/songs/{slug}/fetch", status_code=202)
+def fetch_audio_for_song(slug: str, body: FetchRequest):
+    """Attach audio to an existing song from a link."""
+    if not store.get(slug):
+        raise HTTPException(404, f"no song {slug!r}")
+    try:
+        fetch.check_url(body.url)
+    except fetch.FetchError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    if not fetch.is_available():
+        raise HTTPException(
+            501, "yt-dlp is not installed. Run: pip install -e '.[fetch]'"
+        )
+
+    if not runner.submit_fetch(slug, body.url.strip(), then_transcribe=body.transcribe):
+        raise HTTPException(409, "a job is already running for this song")
+    return {"status": "queued"}
 
 
 @app.get("/api/songs/{slug}/audio")

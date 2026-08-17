@@ -55,8 +55,19 @@ function renderCapabilities(health) {
     health.demucs ? 'demucs ok' : 'demucs MISSING',
     health.adtof ? 'adtof ok' : 'adtof missing — spectral fallback',
   ];
+  if (!health.ytdlp) bits.push('yt-dlp missing — links disabled');
   el.textContent = bits.join(' · ');
-  el.classList.toggle('warn', !health.adtof || !health.demucs);
+  el.classList.toggle('warn', !health.adtof || !health.demucs || !health.ytdlp);
+
+  // Do not offer a control that cannot work.
+  if (!health.ytdlp) {
+    for (const id of ['#urlinput', '#addbtn', '#fetchurl', '#fetchbtn']) {
+      const node = $(id);
+      if (node) node.disabled = true;
+    }
+    $('#urlinput').placeholder = "yt-dlp not installed — pip install -e '.[fetch]'";
+    $('#addbtn').textContent = 'Add song';
+  }
 }
 
 // --- library ----------------------------------------------------------------
@@ -214,36 +225,65 @@ function bindControls() {
     $('#needaudio').scrollIntoView({ block: 'nearest' });
   });
 
+  // A link fetches and transcribes in one go; a file uploads and waits. Both
+  // come through the same form, because "add a song" is one intention.
   $('#newsong').addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const form = new FormData(ev.target);
+    const url = String(form.get('url') || '').trim();
     const file = form.get('audio');
+    const title = String(form.get('title') || '').trim();
+    const artist = String(form.get('artist') || '').trim();
 
-    if (!file || !file.size) {
-      setStatus('Pick an audio file — a song without one cannot be transcribed.', true);
+    if (!url && !(file && file.size)) {
+      setStatus('Paste a link or choose an audio file.', true);
       return;
     }
 
-    const submit = ev.target.querySelector('button[type="submit"]');
+    const submit = $('#addbtn');
+    const original = submit.textContent;
     submit.disabled = true;
-    submit.textContent = 'Uploading…';
+
     try {
-      const song = await api.createSong({
-        title: form.get('title'),
-        artist: form.get('artist'),
-        source_url: form.get('source_url'),
-      });
-      await api.uploadAudio(song.slug, file);
-      ev.target.reset();
-      $('#filename').textContent = 'Choose audio file';
-      $('#filepick').classList.remove('chosen');
-      await refreshLibrary();
-      await openSong(song.slug);
+      if (url) {
+        submit.textContent = 'Fetching…';
+        const { slug } = await api.createFromUrl({ url, title, artist, transcribe: true });
+        resetForm(ev.target);
+        await refreshLibrary();
+        await openSong(slug);
+        trackJob(slug);
+      } else {
+        submit.textContent = 'Uploading…';
+        const song = await api.createSong({ title: title || file.name, artist });
+        await api.uploadAudio(song.slug, file);
+        resetForm(ev.target);
+        await refreshLibrary();
+        await openSong(song.slug);
+      }
     } catch (err) {
-      setStatus(`Could not add song: ${err.message}`, true);
+      setStatus(err.message, true);
     } finally {
       submit.disabled = false;
-      submit.textContent = 'Add song';
+      submit.textContent = original;
+    }
+  });
+
+  // Fetch audio for a song that already exists.
+  $('#fetchbtn').addEventListener('click', async () => {
+    const url = $('#fetchurl').value.trim();
+    if (!url || !state.slug) {
+      setStatus('Paste a link first.', true);
+      return;
+    }
+    $('#fetchbtn').disabled = true;
+    try {
+      await api.fetchAudio(state.slug, { url, transcribe: true });
+      $('#fetchurl').value = '';
+      trackJob(state.slug);
+    } catch (err) {
+      setStatus(err.message, true);
+    } finally {
+      $('#fetchbtn').disabled = false;
     }
   });
 
@@ -320,6 +360,12 @@ function bindControls() {
   window.addEventListener('beforeunload', (ev) => {
     if (state.dirty) ev.preventDefault();
   });
+}
+
+function resetForm(form) {
+  form.reset();
+  $('#filename').textContent = 'Choose audio file';
+  $('#filepick').classList.remove('chosen');
 }
 
 function setStatus(text, isError = false) {

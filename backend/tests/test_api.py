@@ -5,21 +5,6 @@ chart validation hold together. The pipeline itself is covered by
 test_quantize.py.
 """
 
-import pytest
-from fastapi.testclient import TestClient
-
-
-@pytest.fixture()
-def client(tmp_path, monkeypatch):
-    monkeypatch.setenv("DCDC_SONGS_DIR", str(tmp_path / "songs"))
-    # Import after the env var is set: main.py builds its Store at import time.
-    import importlib
-    from dcdc import main as main_module
-    importlib.reload(main_module)
-    with TestClient(main_module.app) as c:
-        yield c
-
-
 def make_chart(title="Test"):
     return {
         "title": title,

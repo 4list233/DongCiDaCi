@@ -57,51 +57,120 @@ function slotDuration(res, timeSignature) {
 }
 
 /**
+ * Note values available for a run of N slots, largest first.
+ *
+ * A run of 2 slots at res 16 is an eighth note, 3 is a dotted eighth, 4 a
+ * quarter. Ties do not work on a percussion staff in alphaTab, so anything not
+ * directly expressible (5, 7, 9 slots...) takes the largest value that fits and
+ * the remainder becomes rests.
+ */
+function noteValues(slotDen) {
+  const values = [];
+  for (let k = 0; k <= 4; k++) {
+    const denominator = slotDen >> k;
+    if (denominator < 1) break;
+    values.push({ slots: 1 << k, duration: denominator, dots: '' });
+    if (k >= 1) {
+      values.push({ slots: 1.5 * (1 << k), duration: denominator, dots: '{d}' });
+    }
+  }
+  return values.sort((a, b) => b.slots - a.slots);
+}
+
+/** Greedily cover `slots` with the largest available note values. */
+function cover(slots, values) {
+  const out = [];
+  let left = slots;
+  while (left > 0) {
+    const fit = values.find((v) => v.slots <= left);
+    if (!fit) break;                       // cannot happen: 1 slot always fits
+    out.push(fit);
+    left -= fit.slots;
+  }
+  return out;
+}
+
+/** The articulation names sounding at one slot, with their effects applied. */
+function hitsAt(bar, slot, articulations) {
+  const hits = [];
+  for (const [lane, pattern] of Object.entries(bar.lanes || {})) {
+    const ch = pattern[slot];
+    if (!ch || ch === REST) continue;
+
+    let name = articulations[lane];
+    if (!name) continue;
+    if (lane === 'hh' && OPEN_CHARS.has(ch)) name = 'HiHatOpen';
+
+    // Accents and ghosts are effects on the note, not different notes.
+    let effects = '';
+    if (ch === 'X' || ch === 'O') effects = '{ac}';
+    else if (ch === 'g') effects = '{g}';
+    else if (ch === 'f') effects = '{gr}';
+
+    hits.push(`${name}${effects}`);
+  }
+  return hits;
+}
+
+/**
  * Render one bar as AlphaTex beats.
  *
- * AlphaTex wants a duration on each beat and simultaneous hits grouped in
- * parentheses. Rests are emitted explicitly rather than by extending the
- * previous note, because a drum chart that hides its rests is unreadable.
+ * Notes are held until the next event rather than written as one note plus a
+ * rest per empty slot. That distinction is the whole readability of the chart:
+ * a plain eighth-note hi-hat pattern written on a 16th grid becomes eight
+ * eighth notes instead of eight note/rest pairs, which is what a drummer would
+ * actually put on paper.
+ *
+ * Duration belongs to the *beat*, not the note, so the gap is measured to the
+ * next slot carrying any hit in any lane, not per lane.
  */
 function renderBar(bar, res, timeSignature, articulations) {
-  const { duration, tuplet } = slotValue(res, timeSignature);
-  // Beat effect, applied after the duration: `SnareHit.8{tu 3}`.
-  const tu = tuplet ? `{tu ${tuplet}}` : '';
+  const { duration: slotDen, tuplet } = slotValue(res, timeSignature);
   const out = [];
 
-  for (let slot = 0; slot < res; slot++) {
-    const hits = [];
-    let isOpen = false;
-
-    for (const [lane, pattern] of Object.entries(bar.lanes || {})) {
-      const ch = pattern[slot];
-      if (!ch || ch === REST) continue;
-
-      let name = articulations[lane];
-      if (!name) continue;
-      if (lane === 'hh' && OPEN_CHARS.has(ch)) {
-        name = 'HiHatOpen';
-        isOpen = true;
-      }
-
-      // Accents and ghosts are effects on the note, not different notes.
-      let effects = '';
-      if (ch === 'X' || ch === 'O') effects = '{ac}';
-      else if (ch === 'g') effects = '{g}';
-      else if (ch === 'f') effects = '{gr}';
-
-      hits.push(`${name}${effects}`);
+  // Triplet grids are emitted one slot at a time. Merging inside a tuplet
+  // produces quarter-note triplets and similar, which need bracket handling
+  // this does not do -- and getting that subtly wrong is worse than verbose.
+  if (tuplet) {
+    const tu = `{tu ${tuplet}}`;
+    for (let slot = 0; slot < res; slot++) {
+      const hits = hitsAt(bar, slot, articulations);
+      out.push(hits.length === 0 ? `r.${slotDen}${tu}`
+        : hits.length === 1 ? `${hits[0]}.${slotDen}${tu}`
+        : `(${hits.join(' ')}).${slotDen}${tu}`);
     }
-
-    if (hits.length === 0) {
-      out.push(`r.${duration}${tu}`);
-    } else if (hits.length === 1) {
-      out.push(`${hits[0]}.${duration}${tu}`);
-    } else {
-      out.push(`(${hits.join(' ')}).${duration}${tu}`);
-    }
-    void isOpen;
+    return out.join(' ');
   }
+
+  const values = noteValues(slotDen);
+  const events = [];
+  for (let slot = 0; slot < res; slot++) {
+    const hits = hitsAt(bar, slot, articulations);
+    if (hits.length) events.push({ slot, hits });
+  }
+
+  const emitRests = (slots) => {
+    for (const v of cover(slots, values)) out.push(`r.${v.duration}${v.dots}`);
+  };
+
+  if (events.length === 0) {
+    emitRests(res);
+    return out.join(' ');
+  }
+
+  if (events[0].slot > 0) emitRests(events[0].slot);
+
+  events.forEach((event, i) => {
+    const next = i + 1 < events.length ? events[i + 1].slot : res;
+    const span = next - event.slot;
+    const [held, ...remainder] = cover(span, values);
+
+    const body = event.hits.length === 1 ? event.hits[0] : `(${event.hits.join(' ')})`;
+    out.push(`${body}.${held.duration}${held.dots}`);
+
+    // Anything the note value could not absorb becomes rests.
+    for (const v of remainder) out.push(`r.${v.duration}${v.dots}`);
+  });
 
   return out.join(' ');
 }
