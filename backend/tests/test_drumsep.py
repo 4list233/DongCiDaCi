@@ -139,11 +139,116 @@ class TestTomSplit:
 
 
 class TestCheckpointCatalogue:
-    def test_the_default_is_the_six_stem_model(self):
-        best = drumsep.CHECKPOINTS[0]
-        assert "ride" in best["stems"] and "crash" in best["stems"]
-
-    def test_every_entry_has_both_urls(self):
+    def test_every_entry_is_named_and_has_both_files(self):
         for choice in drumsep.CHECKPOINTS:
-            assert choice["ckpt"].endswith(".ckpt")
-            assert choice["config"].endswith((".yaml", ".yml"))
+            assert choice["name"]
+            assert choice["ckpt"] and choice["config"]
+
+
+class TestConfigDrivenStems:
+    """What the model outputs is read from its config, not guessed."""
+
+    def _write(self, path, instruments):
+        path.write_text(
+            "audio:\n  sample_rate: 44100\n"
+            "training:\n  instruments:\n"
+            + "".join(f"    - {name}\n" for name in instruments),
+            encoding="utf-8",
+        )
+
+    def test_reads_the_instrument_list(self, tmp_path):
+        pytest.importorskip("yaml")
+        config = tmp_path / "c.yaml"
+        self._write(config, ["kick", "snare", "toms", "hi-hat", "ride", "crash"])
+        assert drumsep.config_instruments(config) == [
+            "kick", "snare", "toms", "hi-hat", "ride", "crash"
+        ]
+
+    def test_every_declared_stem_of_both_versions_maps(self, tmp_path):
+        pytest.importorskip("yaml")
+        for instruments in (
+            ["kick", "snare", "toms", "hi-hat", "ride", "crash"],
+            ["kick", "snare", "toms", "hi-hat", "cymbals"],
+        ):
+            config = tmp_path / "c.yaml"
+            self._write(config, instruments)
+            for name in drumsep.config_instruments(config):
+                assert name.lower() in drumsep.STEM_TO_LANE, name
+
+    def test_unreadable_config_is_not_fatal(self, tmp_path):
+        missing = tmp_path / "nope.yaml"
+        assert drumsep.config_instruments(missing) == []
+        junk = tmp_path / "junk.yaml"
+        junk.write_text("\x00\x01 not: [valid", encoding="utf-8")
+        assert drumsep.config_instruments(junk) == []
+
+    def test_a_real_ride_stem_is_never_second_guessed(self, tmp_path):
+        """The heuristic must not demote genuine ride hits when the separator
+        already told ride from crash."""
+        six = drumsep.DrumStems(stems={n: tmp_path / f"{n}.wav" for n in
+                                       ("kick", "snare", "toms", "hi-hat", "ride", "crash")})
+        assert not six.cymbals_need_splitting
+
+        five = drumsep.DrumStems(stems={n: tmp_path / f"{n}.wav" for n in
+                                        ("kick", "snare", "toms", "hi-hat", "cymbals")})
+        assert five.cymbals_need_splitting
+
+
+class TestMirrors:
+    def test_every_file_lists_more_than_one_mirror(self):
+        """The original GitHub release for this model is already gone."""
+        for choice in drumsep.CHECKPOINTS:
+            assert len(choice["ckpt"]) > 1
+            assert len(choice["config"]) > 1
+
+    def test_urls_point_at_the_right_file_types(self):
+        for choice in drumsep.CHECKPOINTS:
+            assert all(u.endswith(".ckpt") for u in choice["ckpt"])
+            assert all(u.endswith((".yaml", ".yml")) for u in choice["config"])
+
+    def test_falls_through_to_a_working_mirror(self, model_dir, monkeypatch):
+        import urllib.error
+
+        attempted = []
+
+        def fake_urlopen(request, *a, **kw):
+            url = request.full_url if hasattr(request, "full_url") else request
+            attempted.append(url)
+            if "dead" in url:
+                raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+            import io
+            return io.BytesIO(b"payload")
+
+        monkeypatch.setattr("urllib.request.urlopen",
+                            lambda r, *a, **k: _ctx(fake_urlopen(r)))
+        dest = model_dir / "model.ckpt"
+        ok = drumsep._fetch(
+            ["https://dead.example/a.ckpt", "https://live.example/a.ckpt"], dest
+        )
+        assert ok and dest.read_bytes() == b"payload"
+        assert len(attempted) == 2
+
+    def test_leaves_no_partial_file_when_every_mirror_fails(self, model_dir, monkeypatch):
+        import urllib.error
+
+        def always_404(request, *a, **kw):
+            url = request.full_url if hasattr(request, "full_url") else request
+            raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+
+        monkeypatch.setattr("urllib.request.urlopen", always_404)
+        dest = model_dir / "model.ckpt"
+        assert not drumsep._fetch(["https://a.example/x.ckpt"], dest)
+        assert not dest.exists()
+        assert not list(model_dir.glob("*.part"))
+
+
+class _ctx:
+    """Minimal context manager around a stub response."""
+    def __init__(self, obj):
+        self._obj = obj
+
+    def __enter__(self):
+        return self._obj
+
+    def __exit__(self, *exc):
+        return False

@@ -78,69 +78,131 @@ class DrumStems:
 
     @property
     def cymbals_need_splitting(self) -> bool:
-        """True when the model gave one cymbal stem rather than ride and crash."""
-        return UNDIFFERENTIATED_CYMBALS in {n.lower() for n in self.stems}
+        """True when the model gave one cymbal stem rather than ride and crash.
+
+        Decided from what the separator actually produced, so installing a
+        different checkpoint changes this without any code change.
+        """
+        names = {n.lower() for n in self.stems}
+        if "ride" in names or "crash" in names:
+            return False
+        return UNDIFFERENTIATED_CYMBALS in names
 
 
-# Published checkpoints, best first, as listed in ZFTurbo's model registry:
-# https://github.com/ZFTurbo/Music-Source-Separation-Training/blob/main/docs/pretrained_models.md
+# Published checkpoints, best first.
 #
-# The v0.1 model is the one worth having: it separates ride from crash itself
-# rather than emitting one lumped cymbal stem.
-_RELEASES = "https://github.com/jarredou/models/releases/download"
+# Weights for these models get rehosted and the original GitHub release for the
+# v0.1 model is already gone, so each file lists mirrors rather than one URL.
+# Filenames are consistent across the registries that index them, which is what
+# makes mirroring viable at all.
+_HF = "https://huggingface.co"
+_POLITREES = f"{_HF}/Politrees/UVR_resources/resolve/main/models/MDX23C"
+_POLITREES_OLD = f"{_HF}/Politrees/UVR_resources/resolve/main/MDX23C_models"
+_LAINLIVES = f"{_HF}/lainlives/audio-separator-models/resolve/main"
+_JARREDOU = "https://github.com/jarredou/models/releases/download"
+
 CHECKPOINTS: list[dict] = [
     {
-        "name": "aufr33-jarredou v0.1 (6 stems, SDR 10.8)",
-        "stems": "kick, snare, toms, hi-hat, ride, crash",
-        "ckpt": f"{_RELEASES}/aufr33-jarredou_MDX23C_DrumSep_model_v0.1"
-                "/aufr33-jarredou_DrumSep_model_mdx23c_ep_141_sdr_10.8059.ckpt",
-        "config": f"{_RELEASES}/aufr33-jarredou_MDX23C_DrumSep_model_v0.1"
-                  "/aufr33-jarredou_DrumSep_model_mdx23c_ep_141_sdr_10.8059.yaml",
-    },
-    {
-        "name": "jarredou 5-stem",
-        "stems": "kick, snare, toms, hi-hat, cymbals",
-        "ckpt": f"{_RELEASES}/DrumSep/drumsep_5stems_mdx23c_jarredou.ckpt",
-        "config": f"{_RELEASES}/DrumSep/config_mdx23c.yaml",
+        "name": "MDX23C DrumSep (aufr33 & jarredou)",
+        # What it actually produces is read from the config after download
+        # rather than trusted from here.
+        "stems": "kick, snare, toms, hi-hat, and cymbals (ride/crash per version)",
+        "ckpt": [
+            f"{_POLITREES}/MDX23C-DrumSep-aufr33-jarredou.ckpt",
+            f"{_POLITREES_OLD}/MDX23C-DrumSep-aufr33-jarredou.ckpt",
+            f"{_LAINLIVES}/MDX23C-DrumSep-aufr33-jarredou.ckpt",
+        ],
+        "config": [
+            f"{_POLITREES}/config_drumsep_mdx23c.yaml",
+            f"{_POLITREES_OLD}/config_drumsep_mdx23c.yaml",
+            f"{_JARREDOU}/DrumSep/config_mdx23c.yaml",
+        ],
     },
 ]
 
 
-def download(index: int = 0) -> bool:
-    """Fetch a checkpoint and its config into MODEL_DIR. True on success."""
+def config_instruments(config_path: Path) -> list[str]:
+    """The stem names a config declares, in order. Empty if unreadable.
+
+    Authoritative: it is what the model was trained to output, so it beats
+    inferring stems from whatever filenames the inference script happens to
+    write.
+    """
+    try:
+        import yaml
+    except ImportError:
+        return []
+    try:
+        with Path(config_path).open(encoding="utf-8") as handle:
+            config = yaml.safe_load(handle) or {}
+    except Exception:
+        # A config we cannot parse is not fatal; stem matching falls back to
+        # every name we know.
+        return []
+
+    training = config.get("training") or {}
+    instruments = training.get("instruments") or config.get("instruments") or []
+    return [str(name) for name in instruments]
+
+
+def _fetch(urls: list[str], dest: Path) -> bool:
+    """Download the first URL that works. True if `dest` ends up present."""
     import urllib.error
     import urllib.request
 
-    choice = CHECKPOINTS[index]
-    MODEL_DIR.mkdir(parents=True, exist_ok=True)
-    print(f"downloading {choice['name']}  -> {choice['stems']}")
+    if dest.exists() and dest.stat().st_size > 0:
+        print(f"  have {dest.name}")
+        return True
 
-    for kind in ("config", "ckpt"):
-        url = choice[kind]
-        dest = MODEL_DIR / url.rsplit("/", 1)[-1]
-        if dest.exists() and dest.stat().st_size > 0:
-            print(f"  have {dest.name}")
-            continue
-
-        # Download beside the target and rename, so an interrupted download
-        # cannot leave a truncated file that later looks installed.
-        partial = dest.with_suffix(dest.suffix + ".part")
+    # Download beside the target and rename, so an interrupted download cannot
+    # leave a truncated file that later looks installed.
+    partial = dest.with_suffix(dest.suffix + ".part")
+    for url in urls:
+        host = url.split("/")[2]
         try:
-            print(f"  fetching {dest.name} ...", flush=True)
-            with urllib.request.urlopen(url) as response, partial.open("wb") as out:
+            print(f"  fetching {dest.name} from {host} ...", flush=True)
+            request = urllib.request.Request(url, headers={"User-Agent": "dcdc"})
+            with urllib.request.urlopen(request) as response, partial.open("wb") as out:
                 shutil.copyfileobj(response, out)
         except urllib.error.HTTPError as exc:
             partial.unlink(missing_ok=True)
-            print(f"  failed: HTTP {exc.code} for {url}")
-            print("  the release may have moved; check ZFTurbo's pretrained_models.md")
-            return False
+            print(f"    HTTP {exc.code}, trying the next mirror")
+            continue
         except OSError as exc:
             partial.unlink(missing_ok=True)
-            print(f"  failed: {exc}")
-            return False
+            print(f"    {exc}, trying the next mirror")
+            continue
         partial.rename(dest)
         print(f"  saved {dest.name} ({dest.stat().st_size / 1e6:.0f} MB)")
+        return True
 
+    print(f"  every mirror failed for {dest.name}")
+    return False
+
+
+def download(index: int = 0) -> bool:
+    """Fetch a checkpoint and its config into MODEL_DIR. True on success."""
+    choice = CHECKPOINTS[index]
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"downloading {choice['name']}")
+
+    config_urls, ckpt_urls = choice["config"], choice["ckpt"]
+    config_dest = MODEL_DIR / config_urls[0].rsplit("/", 1)[-1]
+    ckpt_dest = MODEL_DIR / ckpt_urls[0].rsplit("/", 1)[-1]
+
+    # Config first: it is small, so a dead mirror set fails in a second rather
+    # than after pulling 438MB.
+    if not _fetch(config_urls, config_dest):
+        return False
+    if not _fetch(ckpt_urls, ckpt_dest):
+        return False
+
+    instruments = config_instruments(config_dest)
+    if instruments:
+        print(f"  stems: {', '.join(instruments)}")
+        unmapped = [i for i in instruments if i.lower() not in STEM_TO_LANE]
+        if unmapped:
+            print(f"  warning: no lane mapped for {unmapped}; those stems are ignored")
     return is_available()
 
 
@@ -226,11 +288,13 @@ def separate(drums_path: Path, out_dir: Path, device: str | None = None) -> Drum
 
     shutil.rmtree(staging, ignore_errors=True)
 
-    # MSST names outputs "<track>_<stem>.wav".
+    # Match against the stem names the config declares, falling back to every
+    # name we know how to map. MSST names outputs "<track>_<stem>.wav".
+    expected = config_instruments(config) or list(STEM_TO_LANE)
     stems: dict[str, Path] = {}
     for wav in sorted(out_dir.glob("*.wav")):
-        for name in STEM_TO_LANE:
-            if wav.stem.lower().endswith(f"_{name}"):
+        for name in expected:
+            if wav.stem.lower().endswith(f"_{name.lower()}"):
                 stems[name] = wav
                 break
 
