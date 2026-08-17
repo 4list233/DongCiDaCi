@@ -26,8 +26,10 @@ function check(name, condition, detail = '') {
 function chart({ bars = 4, res = 16, bpm = 120 } = {}) {
   const barSeconds = (60 / bpm) * 4;
   return {
+    // `n` and a top-level `res`, exactly as the API serves a chart.
+    res,
     bars: Array.from({ length: bars }, (_, i) => ({
-      index: i + 1,
+      n: i + 1,
       lanes: { bd: '-'.repeat(res), sd: '-'.repeat(res) },
     })),
     sync: Array.from({ length: bars }, (_, i) => ({
@@ -98,10 +100,11 @@ console.log('locate: drifting tempo');
   // Sync points from a real beat tracker are not evenly spaced. Bar 2 is
   // stretched, so its slots must stretch with it rather than staying at 125ms.
   const c = {
+    res: 16,
     bars: [
-      { index: 1, lanes: { bd: '-'.repeat(16) } },
-      { index: 2, lanes: { bd: '-'.repeat(16) } },
-      { index: 3, lanes: { bd: '-'.repeat(16) } },
+      { n: 1, lanes: { bd: '-'.repeat(16) } },
+      { n: 2, lanes: { bd: '-'.repeat(16) } },
+      { n: 3, lanes: { bd: '-'.repeat(16) } },
     ],
     sync: [{ bar: 1, time: 0 }, { bar: 2, time: 2.0 }, { bar: 3, time: 5.0 }],
   };
@@ -119,9 +122,16 @@ console.log('locate: bad input');
 {
   check('no chart', locate(null, 1) === null);
   check('no sync points', locate({ bars: [{ index: 1, lanes: {} }], sync: [] }, 1) === null);
-  check('no bars', locate({ bars: [], sync: [{ bar: 1, time: 0 }] }, 1) === null);
-  check('a bar with no lanes yields nothing',
-    locate({ bars: [{ index: 1, lanes: {} }], sync: [{ bar: 1, time: 0 }, { bar: 2, time: 2 }] }, 0.5) === null);
+  check('no bars', locate({ res: 16, bars: [], sync: [{ bar: 1, time: 0 }] }, 1) === null);
+  check('a chart with no resolution yields nothing',
+    locate({ bars: [{ n: 1, lanes: {} }], sync: [{ bar: 1, time: 0 }, { bar: 2, time: 2 }] }, 0.5) === null);
+
+  // An empty bar is the one you most want to play into, so it must be locatable.
+  const empty = locate(
+    { res: 16, bars: [{ n: 1, lanes: {} }, { n: 2, lanes: {} }],
+      sync: [{ bar: 1, time: 0 }, { bar: 2, time: 2 }] }, 0.5);
+  check('an empty bar can still be recorded into',
+    empty?.bar === 1 && empty?.slot === 4, JSON.stringify(empty));
 }
 
 console.log('keymap');

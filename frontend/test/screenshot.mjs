@@ -178,6 +178,103 @@ console.log('\nsplitter');
   await context.close();
 }
 
+// --- playing a part in ------------------------------------------------------
+
+console.log('\nrecording');
+{
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const page = await context.newPage();
+  page.on('pageerror', (err) => errors.push(`[recording] ${err.message}`));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(`[recording] ${m.text()}`); });
+
+  await page.goto(BASE, { waitUntil: 'networkidle' });
+  await page.locator('.songitem').first().click();
+  await page.waitForTimeout(2500);
+
+  await page.locator('#opensettings').click();
+  await page.waitForTimeout(400);
+
+  const lanes = await page.locator('.binding').count();
+  check('every lane is bindable', lanes >= 9, `${lanes} listed`);
+
+  const kickIsSpace = await page.evaluate(() =>
+    [...document.querySelectorAll('.binding')]
+      .find((row) => row.textContent.includes('Kick'))?.textContent.includes('Space'));
+  check('the kick is on the space bar', !!kickIsSpace);
+
+  // No count-in, so the check does not sit through a bar of clicks.
+  await page.selectOption('#countin', '0');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(300);
+
+  const slug = await page.evaluate(() => new URLSearchParams(location.search).get('song'));
+
+  // Clear the opening bars first. Without this the check passes or fails
+  // depending on whether a previous run already wrote the same notes to the
+  // same slots, which made it report a false failure the second time.
+  const noteCount = () => page.evaluate(async (s) => {
+    const r = await fetch(`/api/songs/${s}/chart`);
+    const c = await r.json();
+    return c.bars.slice(0, 4)
+      .flatMap((b) => Object.values(b.lanes))
+      .join('').replace(/-/g, '').length;
+  }, slug);
+
+  await page.evaluate(async (s) => {
+    const r = await fetch(`/api/songs/${s}/chart`);
+    const chart = await r.json();
+    for (const bar of chart.bars.slice(0, 4)) bar.lanes = {};
+    await fetch(`/api/songs/${s}/chart`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(chart),
+    });
+  }, slug);
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForTimeout(2500);
+
+  check('the opening bars start empty', (await noteCount()) === 0);
+
+  await page.locator('#record').click();
+  await page.waitForTimeout(600);
+  check('record arms', await page.evaluate(
+    () => document.querySelector('#record').classList.contains('armed')));
+
+  for (const key of ['Space', 'KeyF', 'KeyD', 'KeyJ', 'Space', 'KeyK']) {
+    await page.keyboard.press(key);
+    await page.waitForTimeout(140);
+  }
+  await page.waitForTimeout(1500);
+
+  // Headless has no audio device, so alphaTab never reports a position and the
+  // recorder correctly refuses to place hits. Which of the two behaviours to
+  // assert depends on whether playback actually started.
+  const playing = await page.evaluate(() => {
+    const el = document.querySelector('#status')?.textContent || '';
+    return !el.includes('nothing is playing');
+  });
+
+  if (playing) {
+    const written = await noteCount();
+    check('played keys reach the chart', written > 0, `${written} notes written`);
+  } else {
+    const told = await page.evaluate(
+      () => (document.querySelector('#status')?.textContent || '').toLowerCase());
+    check('a refused hit says why rather than vanishing',
+      told.includes('nothing is playing') || told.includes('press play'), told.slice(0, 70));
+    check('nothing was written while not playing', (await noteCount()) === 0);
+  }
+
+  await page.screenshot({ path: `${OUT}/recording.png` });
+
+  await page.locator('#record').click();
+  await page.waitForTimeout(300);
+  check('record disarms', !(await page.evaluate(
+    () => document.querySelector('#record').classList.contains('armed'))));
+
+  await context.close();
+}
+
 await browser.close();
 
 if (errors.length) {

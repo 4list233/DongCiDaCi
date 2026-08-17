@@ -51,6 +51,8 @@
         <button id="run" title="Run the transcription pipeline">Transcribe</button>
         <button id="playpause">Play / Pause</button>
         <button id="stop">Stop</button>
+        <button id="record" class="recordbtn" title="Play the part in from the keyboard"
+                aria-pressed="false">● Record</button>
 
         <label class="control">
           Sound
@@ -104,7 +106,39 @@
       </label>
 
       <span id="readingstatus" class="hint"></span>
+      <button id="opensettings" class="ghostbtn" title="Drum keys and timing">Keys…</button>
     </div>
+
+    <!-- Playing a part in needs its own settings: which key is which drum,
+         and how far ahead of the sound your hits land. -->
+    <dialog id="settings" class="settings">
+      <form method="dialog">
+        <h3>Playing in</h3>
+        <p class="hint">Click a key to rebind it, then press the new key.</p>
+        <div id="keybindings" class="keybindings"></div>
+
+        <label class="control">
+          Count-in <select id="countin">
+            <option value="0">none</option>
+            <option value="4" selected>1 bar</option>
+            <option value="8">2 bars</option>
+          </select>
+        </label>
+
+        <label class="control">
+          Latency <span id="latencylabel">0 ms</span>
+          <input id="latency" type="range" min="-150" max="150" step="5" value="0">
+        </label>
+        <p class="hint">
+          Positive if your hits land late in the chart, negative if early.
+        </p>
+
+        <menu>
+          <button id="resetkeys" value="reset" type="button" class="ghostbtn">Reset keys</button>
+          <button value="close">Done</button>
+        </menu>
+      </form>
+    </dialog>
 
     <section id="needaudio" class="needaudio" hidden>
       <h3>This song has no audio yet</h3>

@@ -23,11 +23,12 @@ import { chartToAlphaTex } from './alphatex.js';
 const STEM_DRIFT_TOLERANCE_S = 0.05;
 
 export class Player {
-  constructor(host, { onBarChange, onReady, onStemError } = {}) {
+  constructor(host, { onBarChange, onReady, onStemError, onPosition } = {}) {
     this.host = host;
     this.onBarChange = onBarChange || (() => {});
     this.onReady = onReady || (() => {});
     this.onStemError = onStemError || (() => {});
+    this.onPosition = onPosition || (() => {});
     this.mode = 'original';
     this.originalUrl = null;
     this.stemUrl = null;
@@ -60,6 +61,7 @@ export class Player {
       // In 'both' mode the synth is the clock, so this is also where the
       // stripped recording gets pulled back into line.
       if (this.stem) this._followStem(args.currentTick);
+      this.onPosition(args.currentTime);
 
       const bar = this.mode === 'both'
         ? this._barAtTick(args.currentTick)

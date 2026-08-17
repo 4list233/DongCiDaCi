@@ -182,6 +182,19 @@ export class GridEditor {
     return cell;
   }
 
+  /**
+   * Write a hit that came from somewhere other than a click -- playing the part
+   * in, or clicking the notation. Returns false if the position does not exist,
+   * so a stray hit past the end of the chart is ignored rather than throwing.
+   */
+  applyHit(barNumber, laneKey, slot, value = 'x') {
+    const bar = this.chart?.bars?.find((b) => b.n === barNumber);
+    if (!bar || slot < 0 || slot >= this.chart.res) return false;
+    this._setCell(bar, laneKey, slot, value);
+    this.render();
+    return true;
+  }
+
   _setCell(bar, laneKey, slot, value) {
     const res = this.chart.res;
     let pattern = bar.lanes[laneKey] || REST.repeat(res);

@@ -29,10 +29,13 @@ export class Recorder {
    * @param {(hit) => void} options.onHit        a captured, quantised hit
    * @param {(state) => void} [options.onState]  armed/counting/recording changes
    */
-  constructor({ getChart, onHit, onState } = {}) {
+  constructor({ getChart, onHit, onState, onIgnored } = {}) {
     this.getChart = getChart;
     this.onHit = onHit || (() => {});
     this.onState = onState || (() => {});
+    // A key pressed with nowhere to put it. Silence here means playing a
+    // whole take into the void while the button still says Recording.
+    this.onIgnored = onIgnored || (() => {});
 
     this.keymap = {};
     this.lookup = {};
@@ -106,11 +109,17 @@ export class Recorder {
     this._held.add(event.code);
 
     const playbackMs = this.currentPlaybackMs();
-    if (playbackMs == null) return;      // not playing: nothing to record against
+    if (playbackMs == null) {
+      this.onIgnored('notplaying');
+      return;
+    }
 
     const seconds = (playbackMs - this.latencyMs) / 1000;
     const position = locate(this.getChart(), seconds);
-    if (!position) return;
+    if (!position) {
+      this.onIgnored('offchart');
+      return;
+    }
 
     this.onHit({ lane, ...position, seconds });
   }
@@ -137,10 +146,13 @@ export function locate(chart, seconds) {
 
   const start = sync[index];
   const next = sync[index + 1];
-  const bar = chart.bars.find((b) => b.index === start.bar) || chart.bars[start.bar - 1];
+  const bar = barNumbered(chart, start.bar);
   if (!bar) return null;
 
-  const res = resolutionOf(bar);
+  // From the chart, not from a lane string. Inferring it from the patterns meant
+  // an empty bar had no resolution and could not be recorded into -- which is
+  // precisely the bar you most want to play a part into.
+  const res = chart.res || resolutionOf(bar);
   if (!res) return null;
 
   // Without a following sync point (the last bar) fall back to this bar's own
@@ -157,16 +169,25 @@ export function locate(chart, seconds) {
   // A hit a hair before the barline belongs to the next bar's downbeat, which
   // is exactly where a crash lands.
   if (slot >= res) {
-    const following = chart.bars.find((b) => b.index === start.bar + 1);
+    const following = barNumbered(chart, start.bar + 1);
     if (!following) return { bar: start.bar, slot: res - 1, res };
-    return { bar: following.index, slot: 0, res: resolutionOf(following) || res };
+    return { bar: following.n ?? following.index, slot: 0, res };
   }
   if (slot < 0) slot = 0;
 
   return { bar: start.bar, slot, res };
 }
 
-/** A bar's grid resolution, read from whichever lane string it has. */
+/**
+ * A bar by its number. Charts from the API number bars with `n`; the field was
+ * read as `index` here, which happened to work only because of the positional
+ * fallback, and would have silently mis-targeted any chart with a gap.
+ */
+function barNumbered(chart, number) {
+  return chart.bars.find((b) => (b.n ?? b.index) === number) || chart.bars[number - 1];
+}
+
+/** Fallback resolution when a chart does not carry one. */
 function resolutionOf(bar) {
   const lanes = bar?.lanes;
   if (!lanes) return null;

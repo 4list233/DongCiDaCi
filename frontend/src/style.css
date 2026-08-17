@@ -502,3 +502,70 @@ body.dragging { user-select: none; cursor: row-resize; }
   .notation-wrap { flex-basis: var(--split, 38%); }
   .report { max-height: 5rem; }
 }
+
+/* --- playing a part in ------------------------------------------------------ */
+
+/* Record has to be unmistakable when live: it changes what every key on the
+   keyboard does, and not knowing it is armed is how you lose a take. */
+.recordbtn.armed {
+  background: #a12b2b;
+  border-color: #d05a5a;
+  color: #fff;
+  animation: recordpulse 1.4s ease-in-out infinite;
+}
+
+.recordbtn.counting { background: #6b5220; border-color: #a8843a; color: #fff; }
+
+/* A registered keystroke flashes, since the note may be off-screen. */
+.recordbtn.hit { background: #d05a5a; animation: none; }
+
+@keyframes recordpulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(208, 90, 90, 0.55); }
+  50%      { box-shadow: 0 0 0 6px rgba(208, 90, 90, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .recordbtn.armed { animation: none; }
+}
+
+.settings {
+  border: 1px solid var(--rule);
+  background: var(--panel, #14181d);
+  color: var(--ink, #e6edf3);
+  border-radius: 8px;
+  padding: 1.1rem 1.25rem;
+  max-width: min(30rem, 92vw);
+  max-height: 85vh;
+  overflow-y: auto;
+}
+
+.settings::backdrop { background: rgba(0, 0, 0, 0.55); }
+.settings h3 { margin: 0 0 0.25rem; }
+.settings menu { display: flex; gap: 0.5rem; justify-content: flex-end; padding: 0; margin: 1rem 0 0; }
+
+.keybindings { display: flex; flex-direction: column; gap: 0.3rem; margin: 0.75rem 0 1rem; }
+
+.binding {
+  display: grid;
+  grid-template-columns: 7rem 1fr;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.keys { display: flex; gap: 0.3rem; flex-wrap: wrap; }
+
+.keycap {
+  min-width: 2.1rem;
+  padding: 0.2rem 0.45rem;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 0.78rem;
+  border-radius: 4px;
+}
+
+.keycap.add { opacity: 0.5; }
+.keycap.listening {
+  background: var(--accent, #d9a441);
+  color: #17191c;
+  animation: recordpulse 1s ease-in-out infinite;
+}

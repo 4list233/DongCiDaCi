@@ -4,6 +4,7 @@ import { api, watchJob } from './api.js';
 import { GridEditor } from './editor.js';
 import { Player } from './player.js';
 import { initLayout } from './layout.js';
+import { RecordUI, bindScoreEditing } from './recordui.js';
 import './style.css';
 
 const $ = (sel) => document.querySelector(sel);
@@ -20,6 +21,7 @@ const state = {
 
 let editor = null;
 let player = null;
+let recording = null;
 
 // --- boot -------------------------------------------------------------------
 
@@ -37,8 +39,34 @@ async function boot() {
   player = new Player($('#notation'), {
     onBarChange: (bar) => editor.setActiveBar(bar),
     onStemError: (message) => setStatus(message),
+    // Recording times keystrokes by extrapolating from the last position
+    // report, so it needs every one of them.
+    onPosition: (ms) => recording?.updatePosition(ms),
   });
   player.setVocabulary(state.lanes);
+
+  recording = new RecordUI({
+    getChart: () => state.chart,
+    applyHit: (bar, lane, slot, char) => {
+      const ok = editor.applyHit(bar, lane, slot, char);
+      if (ok) onChartEdited(state.chart);
+      return ok;
+    },
+    player,
+    lanes: state.lanes,
+    setStatus,
+  });
+
+  bindScoreEditing({
+    player,
+    getChart: () => state.chart,
+    applyHit: (bar, lane, slot, char) => {
+      const ok = editor.applyHit(bar, lane, slot, char);
+      if (ok) onChartEdited(state.chart);
+      return ok;
+    },
+    setStatus,
+  });
 
   bindControls();
   // alphaTab lays out to the width it is given, so a resize has to tell it.
@@ -422,6 +450,12 @@ function bindControls() {
       setStatus(err.message, true);
     }
   });
+
+  $('#record').addEventListener('click', () => recording.toggle());
+  $('#opensettings').addEventListener('click', () => recording.openSettings());
+  $('#latency').addEventListener('input', (ev) => recording.setLatency(ev.target.value));
+  $('#countin').addEventListener('change', (ev) => recording.setCountIn(ev.target.value));
+  $('#resetkeys').addEventListener('click', () => recording.resetKeys());
 
   $('#playpause').addEventListener('click', () => player.playPause());
   $('#stop').addEventListener('click', () => player.stop());
