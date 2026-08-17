@@ -116,3 +116,24 @@ def test_raw_chart_is_never_overwritten_by_edits(client, tmp_path):
 
     assert Chart.load(store.raw_path(song.slug)).bars[0].lanes["sd"] == "----o-------o---"
     assert Chart.load(store.chart_path(song.slug)).bars[0].lanes["sd"] == "----o---g---o---"
+
+
+class TestNoDuplicatePileUp:
+    def test_prune_removes_only_failed_songs_by_default(self, client):
+        ok = client.post("/api/songs", json={"title": "Keep"}).json()["slug"]
+        dead = client.post("/api/songs", json={"title": "Dead"}).json()["slug"]
+
+        from dcdc import main as main_module
+        main_module.store.update(dead, status="failed", error="boom")
+
+        result = client.post("/api/songs/prune").json()
+        assert result["removed"] == [dead]
+
+        slugs = [s["slug"] for s in client.get("/api/songs").json()]
+        assert slugs == [ok]
+
+    def test_prune_everything_when_asked(self, client):
+        client.post("/api/songs", json={"title": "One"})
+        client.post("/api/songs", json={"title": "Two"})
+        assert client.post("/api/songs/prune?failed_only=false").json()["count"] == 2
+        assert client.get("/api/songs").json() == []

@@ -17,6 +17,7 @@ song changed.
 from __future__ import annotations
 
 import json
+import os
 import re
 import unicodedata
 from dataclasses import dataclass, asdict, field
@@ -26,6 +27,16 @@ from pathlib import Path
 from .chart import Chart
 
 AUDIO_EXTS = {".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg", ".aiff", ".aif"}
+
+
+def default_root() -> Path:
+    """Where songs live unless told otherwise.
+
+    Defined here rather than in the web app so the CLI and the server cannot
+    disagree: a `dcdc rm` that deletes from a different directory than `dcdc
+    serve` reads would be worse than having no delete command at all.
+    """
+    return Path(os.environ.get("DCDC_SONGS_DIR", Path(__file__).resolve().parents[2] / "songs"))
 
 
 def slugify(text: str) -> str:
@@ -97,6 +108,22 @@ class Store:
         song = Song(slug=slug, title=title, artist=artist, source_url=source_url)
         self.save(song)
         return song
+
+    def find_by_url(self, url: str) -> Song | None:
+        """The existing song for a source link, if there is one.
+
+        Pasting the same link twice should mean "do that again", not "make me a
+        second copy". Without this every retry left another `untitled-N` behind,
+        and since the slug is derived from the title before the downloader has
+        resolved it, those copies are not even identifiable by name.
+        """
+        url = (url or "").strip()
+        if not url:
+            return None
+        for song in self.list():
+            if (song.source_url or "").strip() == url:
+                return song
+        return None
 
     def get(self, slug: str) -> Song | None:
         meta = self.dir(slug) / "song.json"

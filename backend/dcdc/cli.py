@@ -36,6 +36,13 @@ def main(argv: list[str] | None = None) -> int:
     p_serve.add_argument("--host", default="127.0.0.1")
     p_serve.add_argument("--port", type=int, default=8000)
 
+    sub.add_parser("ls", help="list stored songs")
+
+    p_rm = sub.add_parser("rm", help="delete songs")
+    p_rm.add_argument("slugs", nargs="*", help="slugs to delete")
+    p_rm.add_argument("--failed", action="store_true", help="delete every failed song")
+    p_rm.add_argument("--all", action="store_true", help="delete everything")
+
     sub.add_parser("doctor", help="report which pipeline stages are installed")
 
     p_ds = sub.add_parser("install-drumsep", help="download the DrumSep checkpoint")
@@ -52,6 +59,10 @@ def main(argv: list[str] | None = None) -> int:
         return _show(args)
     if args.command == "serve":
         return _serve(args)
+    if args.command == "ls":
+        return _ls()
+    if args.command == "rm":
+        return _rm(args.slugs, failed=args.failed, everything=args.all)
     if args.command == "doctor":
         return _doctor()
     if args.command == "install-drumsep":
@@ -121,6 +132,74 @@ def _serve(args) -> int:
     import uvicorn
     uvicorn.run("dcdc.main:app", host=args.host, port=args.port, reload=False)
     return 0
+
+
+def _store():
+    from .store import Store, default_root
+    return Store(default_root())
+
+
+def _ls() -> int:
+    songs = _store().list()
+    if not songs:
+        print("no songs stored")
+        return 0
+
+    width = max(len(s.slug) for s in songs)
+    for song in songs:
+        size = _song_size(song.slug)
+        print(f"{song.slug:<{width}}  {song.status:<8} {size:>7}  {song.title}")
+    print(f"\n{len(songs)} song(s), {_human(sum(_bytes(s.slug) for s in songs))} on disk")
+    return 0
+
+
+def _rm(slugs: list[str], failed: bool = False, everything: bool = False) -> int:
+    store = _store()
+    songs = store.list()
+
+    if everything:
+        targets = [s.slug for s in songs]
+    elif failed:
+        targets = [s.slug for s in songs if s.status == "failed"]
+    else:
+        targets = list(slugs)
+
+    if not targets:
+        print("nothing to delete" if (failed or everything) else "give a slug, --failed, or --all")
+        return 0 if (failed or everything) else 2
+
+    known = {s.slug for s in songs}
+    missing = [t for t in targets if t not in known]
+    if missing:
+        print(f"no such song: {', '.join(missing)}")
+        return 1
+
+    freed = sum(_bytes(t) for t in targets)
+    for slug in targets:
+        store.delete(slug)
+        print(f"deleted {slug}")
+    print(f"\nfreed {_human(freed)}")
+    return 0
+
+
+def _bytes(slug: str) -> int:
+    """Size on disk. Separated stems dominate this, not the charts."""
+    directory = _store().dir(slug)
+    if not directory.exists():
+        return 0
+    return sum(p.stat().st_size for p in directory.rglob("*") if p.is_file())
+
+
+def _song_size(slug: str) -> str:
+    return _human(_bytes(slug))
+
+
+def _human(size: int) -> str:
+    for unit in ("B", "K", "M", "G"):
+        if size < 1024 or unit == "G":
+            return f"{size:.0f}{unit}" if unit == "B" else f"{size:.1f}{unit}"
+        size /= 1024
+    return f"{size:.1f}G"
 
 
 def _install_drumsep(model: int) -> int:

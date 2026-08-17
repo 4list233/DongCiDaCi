@@ -21,7 +21,7 @@ from pydantic import BaseModel
 
 from .chart import Chart, ChartError, LANES, ARTICULATIONS
 from .jobs import JobRunner
-from .store import Store
+from .store import Store, default_root
 from . import pipeline
 from .pipeline import drumsep, fetch, separate, transcribe
 
@@ -29,7 +29,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 log = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SONGS_DIR = Path(os.environ.get("DCDC_SONGS_DIR", REPO_ROOT / "songs"))
+SONGS_DIR = default_root()
 FRONTEND_DIST = REPO_ROOT / "frontend" / "dist"
 
 store = Store(SONGS_DIR)
@@ -80,6 +80,9 @@ class FetchRequest(BaseModel):
     title: str = ""
     artist: str = ""
     transcribe: bool = True
+    # Set to keep an existing attempt at the same link and start a separate one,
+    # for comparing two transcriptions of the same recording side by side.
+    duplicate: bool = False
 
 
 # --- meta -------------------------------------------------------------------
@@ -165,6 +168,22 @@ async def upload_audio(slug: str, file: UploadFile = File(...)):
     return {"audio_file": name}
 
 
+@app.post("/api/songs/prune")
+def prune_songs(failed_only: bool = True):
+    """Delete songs in bulk. By default only the ones that failed.
+
+    Retrying a link used to leave a dead `untitled-N` behind every time, and
+    clearing those one button at a time is not work anyone should do.
+    """
+    removed = []
+    for song in store.list():
+        if failed_only and song.status != "failed":
+            continue
+        store.delete(song.slug)
+        removed.append(song.slug)
+    return {"removed": removed, "count": len(removed)}
+
+
 @app.post("/api/songs/from-url", status_code=202)
 def create_song_from_url(body: FetchRequest):
     """Create a song from a link, download its audio, and transcribe it.
@@ -184,13 +203,22 @@ def create_song_from_url(body: FetchRequest):
             "yt-dlp is not installed on this machine. Run: pip install -e '.[fetch]'",
         )
 
+    url = body.url.strip()
+
+    # Re-fetching a link means "do that again", not "leave another copy behind".
+    existing = store.find_by_url(url)
+    if existing and not body.duplicate:
+        store.update(existing.slug, status="queued", error="")
+        runner.submit_fetch(existing.slug, url, then_transcribe=body.transcribe)
+        return {"slug": existing.slug, "status": "queued", "reused": True}
+
     song = store.create(
         body.title.strip() or "Untitled",
         body.artist.strip(),
-        body.url.strip(),
+        url,
     )
-    runner.submit_fetch(song.slug, body.url.strip(), then_transcribe=body.transcribe)
-    return {"slug": song.slug, "status": "queued"}
+    runner.submit_fetch(song.slug, url, then_transcribe=body.transcribe)
+    return {"slug": song.slug, "status": "queued", "reused": False}
 
 
 @app.post("/api/songs/{slug}/fetch", status_code=202)
