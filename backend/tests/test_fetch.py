@@ -4,6 +4,8 @@ No network. What is tested is the part that must be right before any network
 call happens: refusing links that cannot possibly work, and saying why.
 """
 
+import types
+
 import pytest
 
 from dcdc.pipeline import fetch
@@ -103,11 +105,11 @@ class TestExplains403:
     network failure and sent people to check their connection. A 403 from a video
     host nearly always means yt-dlp is behind a site change."""
 
-    def test_a_403_names_the_upgrade(self):
+    def test_a_403_points_at_yt_dlp_not_the_connection(self):
         message = fetch._explain(
             RuntimeError("ERROR: unable to download video data: HTTP Error 403: Forbidden")
         )
-        assert "pip install -U yt-dlp" in message
+        assert "yt-dlp" in message
         assert "network" not in message.lower()
 
     def test_a_genuine_network_failure_still_says_so(self):
@@ -121,3 +123,79 @@ class TestExplains403:
 
     def test_missing_ffmpeg_is_still_recognised(self):
         assert "ffmpeg" in fetch._explain(RuntimeError("ffprobe/ffmpeg not found")).lower()
+
+
+class FakeYdl:
+    """Stands in for yt_dlp.YoutubeDL, recording which clients were asked."""
+
+    attempts = []
+
+    def __init__(self, options):
+        self.options = options
+        args = (options.get("extractor_args") or {}).get("youtube", {})
+        self.client = (args.get("player_client") or [None])[0]
+        FakeYdl.attempts.append(self.client)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def module_with(behaviour):
+    """A fake yt_dlp module whose extract_info follows `behaviour(client)`."""
+    FakeYdl.attempts = []
+
+    class Ydl(FakeYdl):
+        def extract_info(self, url, download=True):
+            return behaviour(self.client)
+
+    return types.SimpleNamespace(YoutubeDL=Ydl)
+
+
+class TestPlayerClientFallback:
+    """YouTube gates different stream sets behind different clients, so a refusal
+    is worth retrying as someone else before giving up."""
+
+    def test_the_default_client_is_tried_first_and_alone(self):
+        ydl = module_with(lambda client: {"title": "ok", "client": client})
+        info, error = fetch._download_with_fallbacks(ydl, "https://y/1", {})
+
+        assert error is None and info["title"] == "ok"
+        assert FakeYdl.attempts == [None], "a working link must not pay for retries"
+
+    def test_a_403_falls_through_to_another_client(self):
+        def behaviour(client):
+            if client is None:
+                raise RuntimeError("HTTP Error 403: Forbidden")
+            return {"title": "ok", "client": client}
+
+        info, error = fetch._download_with_fallbacks(module_with(behaviour), "https://y/1", {})
+        assert error is None
+        assert info["client"] == fetch.PLAYER_CLIENTS[1]
+        assert len(FakeYdl.attempts) == 2
+
+    def test_a_private_video_is_not_retried(self):
+        """It fails identically for every client, so retrying only lengthens the
+        wait before the same answer."""
+        def behaviour(client):
+            raise RuntimeError("ERROR: Private video. Sign in if you've been granted access")
+
+        info, error = fetch._download_with_fallbacks(module_with(behaviour), "https://y/1", {})
+        assert info is None and error is not None
+        assert FakeYdl.attempts == [None]
+
+    def test_every_client_refusing_reports_the_last_failure(self):
+        def behaviour(client):
+            raise RuntimeError("HTTP Error 403: Forbidden")
+
+        info, error = fetch._download_with_fallbacks(module_with(behaviour), "https://y/1", {})
+        assert info is None
+        assert "403" in str(error)
+        assert len(FakeYdl.attempts) == len(fetch.PLAYER_CLIENTS)
+
+    def test_the_403_message_does_not_blame_the_connection(self):
+        message = fetch._explain(RuntimeError("HTTP Error 403: Forbidden"))
+        assert "not your connection" in message
+        assert "--pre" in message

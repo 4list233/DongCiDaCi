@@ -129,11 +129,9 @@ def fetch(url: str, dest_dir: Path, progress=None) -> FetchResult:
         "progress_hooks": [hook],
     }
 
-    try:
-        with yt_dlp.YoutubeDL(options) as ydl:
-            info = ydl.extract_info(url, download=True)
-    except Exception as exc:                      # yt_dlp raises many types
-        raise FetchError(_explain(exc)) from exc
+    info, error = _download_with_fallbacks(yt_dlp, url, options)
+    if info is None and error is not None:
+        raise FetchError(_explain(error)) from error
 
     if info is None:
         raise FetchError("Nothing was downloaded from that link.")
@@ -156,6 +154,54 @@ def fetch(url: str, dest_dir: Path, progress=None) -> FetchResult:
         duration=info.get("duration"),
         source_url=info.get("webpage_url") or url,
     )
+
+
+# YouTube serves different stream sets to different clients, and only some of
+# them are signature-gated at any given moment. When the default is refused,
+# asking as another client is what actually gets the audio -- which beats
+# telling someone to upgrade a package that is already current.
+#
+# Ordered by how often they work and how little they cost; the first entry is
+# yt-dlp's own default, so a working link never pays for this at all.
+PLAYER_CLIENTS = (None, "ios", "android_vr", "tv", "web_safari", "mweb")
+
+
+def _download_with_fallbacks(yt_dlp, url: str, options: dict):
+    """Try the default client, then others if the host refuses.
+
+    Returns (info, error). Only refusals are retried: a private video or a dead
+    link fails the same way for every client, and retrying those five times just
+    makes the wait longer before the same answer.
+    """
+    last_error = None
+
+    for client in PLAYER_CLIENTS:
+        attempt = dict(options)
+        if client:
+            attempt["extractor_args"] = {"youtube": {"player_client": [client]}}
+
+        try:
+            with yt_dlp.YoutubeDL(attempt) as ydl:
+                info = ydl.extract_info(url, download=True)
+            if client:
+                log.info("downloaded using the %s player client", client)
+            return info, None
+        except Exception as exc:                  # yt_dlp raises many types
+            last_error = exc
+            if not _is_refusal(exc):
+                break
+            log.info("client %s was refused, trying another", client or "default")
+
+    return None, last_error
+
+
+def _is_refusal(exc: Exception) -> bool:
+    """Whether this failure is worth retrying as a different client."""
+    text = str(exc).lower()
+    return any(marker in text for marker in (
+        "403", "forbidden", "unable to download video data",
+        "sign in to confirm", "player response",
+    ))
 
 
 def _explain(exc: Exception) -> str:
@@ -182,11 +228,11 @@ def _explain(exc: Exception) -> str:
     # has simply moved on from the version you have installed.
     if "403" in lowered and "forbidden" in lowered:
         return (
-            "The host refused the download (HTTP 403). This nearly always means "
-            "yt-dlp is behind a site change rather than anything being wrong with "
-            "the link or your connection.\n\n  pip install -U yt-dlp\n\n"
-            "If it persists after upgrading, the video may be region-locked or "
-            "require signing in."
+            "The host refused the download (HTTP 403) from every player client "
+            "tried. This is not your connection.\n\n"
+            "  pip install -U --pre yt-dlp   (nightly; stable lags site changes)\n\n"
+            "If that does not help, the video is likely region-locked or needs a "
+            "signed-in session."
         )
     if "unable to download" in lowered or "urlopen" in lowered:
         return (
