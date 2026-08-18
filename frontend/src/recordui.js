@@ -252,31 +252,63 @@ export class RecordUI {
 }
 
 /**
- * Click the notation to edit it.
+ * Make the score itself the surface you work on.
  *
- * alphaTab is a renderer, not an editor, but it exposes the pixel geometry of
- * every beat -- which is all an editing overlay needs. Because the AlphaTex is
- * generated here, a clicked beat can be mapped straight back to a bar and slot
- * without parsing anything.
+ * alphaTab renders; it does not edit. But it exposes the beat under a click,
+ * and because the AlphaTex is generated here that beat maps straight back to a
+ * bar and slot. That is enough to treat the notation as the document rather
+ * than as a picture of one, with the grid below it as a fallback instead of
+ * the only way in.
+ *
+ * Clicking has to mean one thing at a time. In `play` it moves the playhead --
+ * which is what you want ninety percent of the time, going back over a fill.
+ * In `edit` it removes the note you clicked. A mode is honest about that; a
+ * modifier key would leave people clicking and getting a surprise.
  */
-export function bindScoreEditing({ player, getChart, applyHit, setStatus }) {
-  const api = player?.api;
-  if (!api?.noteMouseDown) return;
+export class ScoreInteraction {
+  constructor({ player, getChart, applyHit, onSeek, setStatus }) {
+    this.player = player;
+    this.getChart = getChart;
+    this.applyHit = applyHit;
+    this.onSeek = onSeek || (() => {});
+    this.setStatus = setStatus || (() => {});
+    this.mode = 'play';
 
-  // Clicking an existing note removes it: the commonest correction by far is
-  // "the machine heard something that is not there".
-  api.noteMouseDown.on((note) => {
-    const chart = getChart();
-    if (!chart) return;
-    const position = beatPosition(note.beat, chart);
+    const api = player?.api;
+    if (!api) return;
+
+    api.beatMouseDown?.on((beat) => this._onBeat(beat));
+    api.noteMouseDown?.on((note) => this._onNote(note));
+  }
+
+  setMode(mode) {
+    this.mode = mode;
+    document.body.classList.toggle('editing-score', mode === 'edit');
+    this.setStatus(mode === 'edit'
+      ? 'Edit mode — click a note on the score to remove it.'
+      : 'Click anywhere on the score to play from there.');
+  }
+
+  _onBeat(beat) {
+    const chart = this.getChart();
+    if (!chart || this.mode !== 'play') return;
+
+    const position = beatPosition(beat, chart);
     if (!position) return;
+    this.onSeek(position.bar);
+  }
 
+  _onNote(note) {
+    const chart = this.getChart();
+    if (!chart || this.mode !== 'edit') return;
+
+    const position = beatPosition(note.beat, chart);
     const lane = laneOfNote(note);
-    if (!lane) return;
+    if (!position || !lane) return;
 
-    applyHit(position.bar, lane, position.slot, '-');
-    setStatus(`removed ${lane} in bar ${position.bar}`);
-  });
+    this.applyHit(position.bar, lane, position.slot, '-');
+    this.setStatus(`removed ${lane} in bar ${position.bar}`);
+  }
 }
 
 /** Where a beat sits, as a bar number and slot index. */
@@ -292,7 +324,7 @@ function beatPosition(beat, chart) {
   const within = (beat.playbackStart ?? 0) % TICKS_PER_BAR;
   const slot = Math.round((within / TICKS_PER_BAR) * chart.res);
 
-  return { bar: bar.n, slot: Math.min(slot, chart.res - 1) };
+  return { bar: bar.n ?? barIndex + 1, slot: Math.min(slot, chart.res - 1) };
 }
 
 /** Which lane a rendered note belongs to, by its percussion MIDI value. */

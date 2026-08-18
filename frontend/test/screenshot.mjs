@@ -150,19 +150,33 @@ console.log('\nsplitter');
     () => document.querySelector('.notation-wrap').getBoundingClientRect().height
   );
 
+  // Drag to an explicit target rather than by a pixel offset. Any fixed
+  // distance is worth a different share once a row is added above the panes,
+  // which is what turned this check into a false failure.
+  const geometry = await page.evaluate(() => {
+    const top = document.querySelector('.notation-wrap').getBoundingClientRect().top;
+    const box = document.querySelector('.main').getBoundingClientRect();
+    return { top, available: box.bottom - top, height: box.height };
+  });
+  // Aim for a pane a quarter of the container tall, which is what dropping the
+  // handle there should produce.
+  const wantedHeight = geometry.height * 0.25;
+  const targetY = geometry.top + wantedHeight;
+
   const handle = page.locator('#splitter');
   const box = await handle.boundingBox();
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
-  await page.mouse.move(box.x + box.width / 2, box.y - 160, { steps: 12 });
+  await page.mouse.move(box.x + box.width / 2, targetY, { steps: 15 });
   await page.mouse.up();
   await page.waitForTimeout(300);
 
   const after = await page.evaluate(
     () => document.querySelector('.notation-wrap').getBoundingClientRect().height
   );
-  check('dragging the splitter resizes the notation pane',
-    Math.abs(after - before) > 80, `${Math.round(before)}px -> ${Math.round(after)}px`);
+  check('the splitter drags the notation pane to where it was dropped',
+    Math.abs(after - wantedHeight) < 25,
+    `${Math.round(before)}px -> ${Math.round(after)}px, wanted ~${Math.round(wantedHeight)}px`);
 
   // A layout you must re-establish every visit is not adjustable in any useful
   // sense, so the split has to survive a reload.

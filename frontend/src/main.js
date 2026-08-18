@@ -4,7 +4,8 @@ import { api, watchJob } from './api.js';
 import { GridEditor } from './editor.js';
 import { Player } from './player.js';
 import { initLayout } from './layout.js';
-import { RecordUI, bindScoreEditing } from './recordui.js';
+import { RecordUI, ScoreInteraction } from './recordui.js';
+import { Timeline } from './timeline.js';
 import './style.css';
 
 const $ = (sel) => document.querySelector(sel);
@@ -22,6 +23,8 @@ const state = {
 let editor = null;
 let player = null;
 let recording = null;
+let timeline = null;
+let score = null;
 
 // --- boot -------------------------------------------------------------------
 
@@ -36,8 +39,16 @@ async function boot() {
     onSeek: (bar) => player?.playFromBar(bar),
   });
 
+  timeline = new Timeline($('#timeline'), {
+    onSeek: (bar) => player.playFromBar(bar),
+    onLoop: (from, to) => (from ? player.loopBars(from, to) : player.clearLoop()),
+  });
+
   player = new Player($('#notation'), {
-    onBarChange: (bar) => editor.setActiveBar(bar),
+    onBarChange: (bar) => {
+      editor.setActiveBar(bar);
+      timeline.setBar(bar);
+    },
     onStemError: (message) => setStatus(message),
     // Recording times keystrokes by extrapolating from the last position
     // report, so it needs every one of them.
@@ -57,7 +68,7 @@ async function boot() {
     setStatus,
   });
 
-  bindScoreEditing({
+  score = new ScoreInteraction({
     player,
     getChart: () => state.chart,
     applyHit: (bar, lane, slot, char) => {
@@ -65,12 +76,16 @@ async function boot() {
       if (ok) onChartEdited(state.chart);
       return ok;
     },
+    onSeek: (bar) => {
+      timeline.setBar(bar);
+      player.playFromBar(bar);
+    },
     setStatus,
   });
 
   bindControls();
   // alphaTab lays out to the width it is given, so a resize has to tell it.
-  initLayout({ onResize: () => player?.api?.render?.() });
+  initLayout({ onResize: () => { player?.api?.render?.(); timeline?.relayout(); } });
   await refreshLibrary();
 
   const slug = new URLSearchParams(location.search).get('song');
@@ -174,6 +189,7 @@ async function openSong(slug) {
   } else {
     state.chart = null;
     editor.setChart(null);
+    timeline.setChart(null);
     $('#reading').hidden = true;
     setStatus(song.has_audio
       ? 'Audio ready. Hit Transcribe for a first draft.'
@@ -185,6 +201,7 @@ async function loadChart(slug, { keepReading = false } = {}) {
   state.chart = await api.getChart(slug);
   editor.setChart(state.chart);
   player.setChart(state.chart);
+  timeline.setChart(state.chart);
   setStatus(`${state.chart.bars.length} bars · res ${state.chart.res} · ${state.chart.tempo} bpm`);
 
   // Reflect whatever this chart was last built with, so the controls describe
@@ -452,6 +469,23 @@ function bindControls() {
   });
 
   $('#record').addEventListener('click', () => recording.toggle());
+
+  $('#editmode').addEventListener('click', (ev) => {
+    const editing = ev.target.getAttribute('aria-pressed') !== 'true';
+    ev.target.setAttribute('aria-pressed', String(editing));
+    ev.target.classList.toggle('active', editing);
+    score.setMode(editing ? 'edit' : 'play');
+  });
+
+  // The grid is a fallback now, not the main surface. Folding it away gives the
+  // score the whole page, which is how you read a part rather than fix one.
+  $('#togglegrid').addEventListener('click', (ev) => {
+    const open = ev.target.getAttribute('aria-expanded') !== 'true';
+    ev.target.setAttribute('aria-expanded', String(open));
+    ev.target.textContent = open ? 'Grid ▾' : 'Grid ▸';
+    document.body.classList.toggle('grid-collapsed', !open);
+    player?.api?.render?.();
+  });
   $('#opensettings').addEventListener('click', () => recording.openSettings());
   $('#latency').addEventListener('input', (ev) => recording.setLatency(ev.target.value));
   $('#countin').addEventListener('change', (ev) => recording.setCountIn(ev.target.value));

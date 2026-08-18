@@ -569,3 +569,114 @@ body.dragging { user-select: none; cursor: row-resize; }
   color: #17191c;
   animation: recordpulse 1s ease-in-out infinite;
 }
+
+/* --- timeline --------------------------------------------------------------- */
+
+/* Navigation for the whole song. Reading a chart is not a linear pass -- you go
+   back over the same four bars until the fill lands -- so "there" has to cost
+   one click rather than a scroll and a hunt. */
+.timeline {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.45rem 1rem 0.6rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+.tl-track {
+  position: relative;
+  flex: 1;
+  height: 1.6rem;
+  cursor: pointer;
+  border-radius: 3px;
+  background: var(--well, #0f1216);
+  touch-action: none;         /* drag-to-loop must not scroll the page */
+}
+
+.tl-played {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--accent, #d9a441);
+  opacity: 0.22;
+  border-radius: 3px 0 0 3px;
+  pointer-events: none;
+}
+
+.tl-loop {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: var(--accent, #d9a441);
+  opacity: 0.16;
+  border-left: 1px solid var(--accent, #d9a441);
+  border-right: 1px solid var(--accent, #d9a441);
+  pointer-events: none;
+}
+
+.tl-head {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  background: var(--accent, #d9a441);
+  pointer-events: none;
+  transition: left 0.08s linear;   /* smooth at the bar rate it is updated */
+}
+
+.tl-ticks { position: absolute; inset: 0; pointer-events: none; }
+
+.tl-tick {
+  position: absolute;
+  top: 0.15rem;
+  transform: translateX(-50%);
+  font-size: 0.62rem;
+  color: var(--ink-3, #8b949e);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Section names are the landmarks people navigate by, so they outrank numbers. */
+.tl-section {
+  position: absolute;
+  bottom: 0.1rem;
+  transform: translateX(-50%);
+  font-size: 0.6rem;
+  padding: 0 0.25rem;
+  border-radius: 2px;
+  background: var(--accent, #d9a441);
+  color: #17191c;
+  white-space: nowrap;
+}
+
+.tl-readout {
+  font-size: 0.72rem;
+  color: var(--ink-3, #8b949e);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.timeline:focus-visible { outline: 2px solid var(--accent, #d9a441); outline-offset: -2px; }
+
+/* --- the score as the surface ----------------------------------------------- */
+
+/* Editing the score is a mode, because a click cannot mean both "play from
+   here" and "delete this" without one of them being a surprise. */
+#editmode.active {
+  background: var(--accent, #d9a441);
+  color: #17191c;
+  border-color: var(--accent, #d9a441);
+}
+
+body.editing-score .notation-wrap { cursor: crosshair; }
+
+/* Folding the grid away gives the score the whole page, which is how you read a
+   part rather than repair one. */
+body.grid-collapsed .gridhost,
+body.grid-collapsed .splitter { display: none; }
+
+body.grid-collapsed .notation-wrap { flex: 1 1 auto; }
+body.grid-collapsed .editor-wrap { flex: 0 0 auto; min-height: 0; }
+
+@media (max-width: 620px) {
+  .timeline { padding: 0.4rem 0.6rem; gap: 0.5rem; }
+  .tl-readout { display: none; }
+}

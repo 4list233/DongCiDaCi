@@ -53,6 +53,8 @@
         <button id="stop">Stop</button>
         <button id="record" class="recordbtn" title="Play the part in from the keyboard"
                 aria-pressed="false">● Record</button>
+        <button id="editmode" class="ghostbtn" aria-pressed="false"
+                title="Click notes on the score to remove them">Edit score</button>
 
         <label class="control">
           Sound
@@ -70,6 +72,8 @@
         </label>
       </div>
     </header>
+
+    <div id="timeline" hidden></div>
 
     <p id="status" class="status-line"></p>
     <div id="report" class="report"></div>
@@ -174,6 +178,8 @@
 
     <section class="editor-wrap">
       <div class="legend">
+        <button id="togglegrid" class="ghostbtn" aria-expanded="true"
+                title="Hide the grid and give the score the whole page">Grid ▾</button>
         <span><b>click</b> cycles · <b>right-click</b> clears · <b>drag</b> paints</span>
         <span class="chars">
           <b>x</b> hit · <b>X</b> accent · <b>+</b> open hat ·

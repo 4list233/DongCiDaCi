@@ -50,14 +50,17 @@ function bindSplitter(splitter, main, onResize) {
 
   const apply = (clientY) => {
     const box = main.getBoundingClientRect();
-    // Measure from the top of the notation pane, not the top of the window, or
-    // the toolbar height silently offsets every drag.
     const notation = document.querySelector('.notation-wrap');
     const top = notation ? notation.getBoundingClientRect().top : box.top;
-    const available = box.bottom - top;
-    if (available <= 0) return;
 
-    const share = Math.min(Math.max((clientY - top) / available, MIN_SHARE), MAX_SHARE);
+    // The share is a flex-basis percentage, and flex-basis resolves against the
+    // *container's* height -- not against the space left below the toolbars.
+    // Dividing by the remaining space instead made every drag land short of
+    // where it was dropped, by however tall the rows above happened to be.
+    const height = box.height;
+    if (height <= 0) return;
+
+    const share = Math.min(Math.max((clientY - top) / height, MIN_SHARE), MAX_SHARE);
     setSplit(main, share);
     localStorage.setItem(SPLIT_KEY, String(share));
     onResize?.();
