@@ -29,6 +29,20 @@ SPOTIFY_RE = re.compile(r"(open\.)?spotify\.com|spotify:", re.I)
 APPLE_MUSIC_RE = re.compile(r"music\.apple\.com", re.I)
 
 
+def version() -> str:
+    """The installed yt-dlp version, or empty if it is not there.
+
+    Worth surfacing: yt-dlp is dated by release, and a copy more than a few
+    weeks old is the most likely explanation for a download that suddenly stops
+    working against a site that has not changed for the user.
+    """
+    try:
+        from yt_dlp import version as ytdlp_version
+        return str(ytdlp_version.__version__)
+    except Exception:
+        return ""
+
+
 class FetchError(RuntimeError):
     """Raised with a message meant to be shown to the user verbatim."""
 
@@ -161,8 +175,24 @@ def _explain(exc: Exception) -> str:
         return "yt-dlp does not recognise that site."
     if "http error 429" in lowered or "too many requests" in lowered:
         return "Rate-limited by the host. Wait a few minutes and try again."
+
+    # 403 has to be checked before the generic download failure below, because
+    # yt-dlp words it as "unable to download video data" and that read as a
+    # network problem -- sending you to look at your connection when the site
+    # has simply moved on from the version you have installed.
+    if "403" in lowered and "forbidden" in lowered:
+        return (
+            "The host refused the download (HTTP 403). This nearly always means "
+            "yt-dlp is behind a site change rather than anything being wrong with "
+            "the link or your connection.\n\n  pip install -U yt-dlp\n\n"
+            "If it persists after upgrading, the video may be region-locked or "
+            "require signing in."
+        )
     if "unable to download" in lowered or "urlopen" in lowered:
-        return f"Network error while downloading: {text}"
+        return (
+            f"The download failed: {text}\n\nIf this repeats, upgrade yt-dlp -- "
+            "it breaks whenever a site changes: pip install -U yt-dlp"
+        )
     # yt-dlp is frequently broken by upstream site changes; say so, because
     # "upgrade yt-dlp" genuinely is the fix most of the time.
     return (

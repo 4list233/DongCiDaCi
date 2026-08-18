@@ -96,3 +96,28 @@ class TestApiSurface:
 
     def test_health_reports_ytdlp(self, client):
         assert "ytdlp" in client.get("/api/health").json()
+
+
+class TestExplains403:
+    """yt-dlp words a 403 as "unable to download video data", which read as a
+    network failure and sent people to check their connection. A 403 from a video
+    host nearly always means yt-dlp is behind a site change."""
+
+    def test_a_403_names_the_upgrade(self):
+        message = fetch._explain(
+            RuntimeError("ERROR: unable to download video data: HTTP Error 403: Forbidden")
+        )
+        assert "pip install -U yt-dlp" in message
+        assert "network" not in message.lower()
+
+    def test_a_genuine_network_failure_still_says_so(self):
+        message = fetch._explain(RuntimeError("unable to download: <urlopen error timed out>"))
+        assert "failed" in message.lower()
+
+    def test_rate_limiting_is_not_confused_with_a_stale_version(self):
+        message = fetch._explain(RuntimeError("HTTP Error 429: Too Many Requests"))
+        assert "wait" in message.lower()
+        assert "yt-dlp" not in message
+
+    def test_missing_ffmpeg_is_still_recognised(self):
+        assert "ffmpeg" in fetch._explain(RuntimeError("ffprobe/ffmpeg not found")).lower()

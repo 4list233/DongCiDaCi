@@ -256,6 +256,24 @@ def _human(size: int) -> str:
     return f"{size:.1f}G"
 
 
+def _looks_stale(version: str) -> bool:
+    """True when the yt-dlp release date is far enough back to be suspect.
+
+    Versions are dated (2026.08.12), so age is readable without a network call.
+    """
+    import datetime
+    import re
+
+    match = re.match(r"(\d{4})\.(\d{2})\.(\d{2})", version or "")
+    if not match:
+        return False
+    try:
+        released = datetime.date(*(int(part) for part in match.groups()))
+    except ValueError:
+        return False
+    return (datetime.date.today() - released).days > 90
+
+
 def _install_drumsep(model: int) -> int:
     from .pipeline import drumsep
 
@@ -299,7 +317,9 @@ def _doctor() -> int:
     drumsep_ready, drumsep_problems = drumsep.check()
 
     print(f"device            {separate.pick_device()}")
-    print(f"yt-dlp            {mark(fetch.is_available())}   stage 0, audio from a link")
+    ytdlp_version = fetch.version()
+    print(f"yt-dlp            {mark(fetch.is_available())}   stage 0, audio from a link"
+          + (f"  ({ytdlp_version})" if ytdlp_version else ""))
     print(f"demucs            {mark(separate.is_available())}   stage 1, drum isolation")
     print(f"drumsep           {mark(drumsep_ready)}   stage 1b, per-instrument stems")
     print(f"beat_this         {mark(has_beat_this)}   stage 2, preferred beat tracker")
@@ -313,6 +333,10 @@ def _doctor() -> int:
     if not fetch.is_available():
         print("\nno yt-dlp -- links are disabled, audio must be uploaded as a file:")
         print("  pip install -e '.[fetch]'")
+    elif _looks_stale(ytdlp_version):
+        print(f"\nyt-dlp {ytdlp_version} is a few months old. Sites break it routinely,")
+        print("and a 403 on download is nearly always this:")
+        print("  pip install -U yt-dlp")
     if not has_beat_this:
         print("\nno beat tracker -- downbeats are inferred, so bar 1 may be wrong:")
         print("  pip install 'git+https://github.com/CPJKU/beat_this.git'")

@@ -4,6 +4,7 @@ Covers the failure that is hardest to notice: the server serving an interface
 build older than the code that was pulled, so a change appears not to work.
 """
 
+import datetime
 import os
 import time
 import types
@@ -63,3 +64,21 @@ class TestStaleFrontend:
 
         cli._ensure_frontend_built()          # must not raise
         assert "rebuild failed" in capsys.readouterr().err
+
+
+class TestYtdlpAge:
+    """yt-dlp is dated by release, so staleness is readable without a network
+    call -- and a stale copy is the usual reason a download starts 403ing."""
+
+    def test_a_recent_release_is_not_flagged(self):
+        recent = (datetime.date.today() - datetime.timedelta(days=20)).strftime("%Y.%m.%d")
+        assert not cli._looks_stale(recent)
+
+    def test_an_old_release_is_flagged(self):
+        old = (datetime.date.today() - datetime.timedelta(days=200)).strftime("%Y.%m.%d")
+        assert cli._looks_stale(old)
+
+    def test_an_unparseable_version_is_never_flagged(self):
+        """Guessing wrong here would nag about a version that is perfectly fine."""
+        for value in ("", "nightly", "unknown", "2026.13.99"):
+            assert not cli._looks_stale(value)
